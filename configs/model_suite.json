@@ -1,0 +1,9 @@
+{
+  "base_config": "two_candidates.json",
+  "title": "同色 Charger 变体：局部结构差异与位置交换",
+  "description": "普通 Charger 为目标，警用 Charger 为干扰；配置同为白色。先检查警灯、前脸和实际涂装，确认不是明显颜色差异在主导。两组共用目标参考图。",
+  "cases": [
+    {"name": "charger_variant_Aleft", "distractor_blueprint": "vehicle.dodgecop.charger", "distractor_color": "255,255,255", "swap": false},
+    {"name": "charger_variant_Aright", "distractor_blueprint": "vehicle.dodgecop.charger", "distractor_color": "255,255,255", "swap": true}
+  ]
+}

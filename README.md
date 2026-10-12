@@ -1,5 +1,20 @@
 # 相似车辆辨识信号实验
 
+## 同色车型变体对照（优先预览）
+
+```bash
+conda activate carla10
+python capture_suite.py --suite configs/model_suite.json --output data/model_suite01
+```
+
+普通 `vehicle.dodge.charger` 是目标 A，警用 `vehicle.dodgecop.charger` 是干扰 B，
+两车配置为白色；两个位置交换版本共用同一张 A 参考图。名称来自服务器实际资产清单。
+这是同车系变体而非两个完全不同车身类别，先看车顶装备、前脸和局部外观。
+警用资产的灯具、涂装及颜色属性实际效果尚未验证；如实拍仍有明显涂装差异，
+不能把这组结果解释为仅由微小车型结构差异造成，也不能把参数同色当成渲染同色。
+当前不修改 Unreal 资产；先下载并查看 `suite_preview.html`，再决定是否适合作为困难干扰。
+以前的颜色对照仍保留，但后续不以颜色差异作为唯一研究对象。
+
 ## 六组对照：稍大颜色差异与目标位置交换
 
 ```bash

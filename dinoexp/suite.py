@@ -24,6 +24,11 @@ def build_cases(base, spec):
         if len(channels) != 3 or any(not c.isdigit() or not 0 <= int(c) <= 255 for c in channels):
             raise ValueError("distractor_color must be three RGB channels in [0,255]")
         cfg["candidates"][1]["color"] = case["distractor_color"]
+        if "distractor_blueprint" in case:
+            blueprint = case["distractor_blueprint"]
+            if not isinstance(blueprint, str) or not blueprint.startswith("vehicle."):
+                raise ValueError("distractor_blueprint must name a vehicle asset")
+            cfg["candidates"][1]["blueprint"] = blueprint
         if not isinstance(case["swap"], bool):
             raise ValueError("swap must be a boolean")
         if case["swap"]:

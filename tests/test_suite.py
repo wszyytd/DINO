@@ -10,6 +10,26 @@ from dinoexp.suite import build_cases, reuse_reference
 
 
 class SuiteTests(unittest.TestCase):
+    def test_model_variant_changes_blueprint_without_using_color_difference(self):
+        base = json.loads(Path("configs/two_candidates.json").read_text())
+        cases = build_cases(
+            base,
+            dict(
+                cases=[
+                    dict(
+                        name="variant",
+                        swap=False,
+                        distractor_color="255,255,255",
+                        distractor_blueprint="vehicle.dodgecop.charger",
+                    )
+                ]
+            ),
+        )
+        candidates = cases[0][1]["candidates"]
+        self.assertEqual(candidates[0]["blueprint"], "vehicle.dodge.charger")
+        self.assertEqual(candidates[1]["blueprint"], "vehicle.dodgecop.charger")
+        self.assertEqual(candidates[0]["color"], candidates[1]["color"])
+
     def test_shared_reference_preserves_source_metadata_and_query_images(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

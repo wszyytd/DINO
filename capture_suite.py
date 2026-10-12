@@ -1,4 +1,4 @@
-"""Six controlled two-candidate conditions, paired position swaps and a shared reference."""
+"""Controlled two-candidate conditions, paired position swaps and a shared reference."""
 
 import argparse
 import html
@@ -39,7 +39,7 @@ def main():
         status="incomplete",
         conditions=[],
         shared_reference=cases[0][0],
-        note="same map/location/weather, six conditions; not independent scene trials",
+        note="same map/location/weather, controlled conditions; not independent scene trials",
     )
     cards = []
     try:
@@ -67,15 +67,16 @@ def main():
             manifest["conditions"].append(dict(name=name, status="complete", config=cfg))
             escaped = html.escape(name)
             cards.append(
-                f"<section><h2>{escaped}</h2><p>{html.escape(str([(c['identity'], c['color']) for c in cfg['candidates']]))}</p>"
+                f"<section><h2>{escaped}</h2><p>{html.escape(str([(c['identity'], c['blueprint'], c['color']) for c in cfg['candidates']]))}</p>"
                 f'<a href="{escaped}/preview.html"><img width="900" src="{escaped}/images/overview.png"></a>'
                 f'<p><a href="{escaped}/preview.html">查看参考图、各视点和候选裁剪</a></p></section>'
             )
             (root / "suite_preview.html").write_text(
-                '<!doctype html><meta charset="utf-8"><title>六组对照预览</title>'
+                '<!doctype html><meta charset="utf-8"><title>场景对照预览</title>'
                 "<style>body{max-width:1050px;margin:30px auto;font:16px system-ui}img{max-width:100%}</style>"
-                "<h1>两候选同场：颜色差异与位置交换</h1><p>每组 A 始终是白色目标；共用第一组的目标参考图。"
-                "同地点的六个对照条件，不是六次独立场景测试。先检查真实外观与遮挡。</p>"
+                f"<h1>{html.escape(spec.get('title', '两候选同场：颜色差异与位置交换'))}</h1>"
+                f"<p>{html.escape(spec.get('description', '每组 A 始终是白色目标；共用第一组的目标参考图。'))}</p>"
+                f"<p>同地点的 {len(cases)} 个对照条件，不是独立场景测试。先检查真实外观与遮挡。</p>"
                 + "".join(cards),
                 encoding="utf-8",
             )
