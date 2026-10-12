@@ -1,0 +1,21 @@
+{
+  "host": "127.0.0.1", "port": 2000, "timeout": 60,
+  "width": 1024, "height": 768, "fov": 70,
+  "fixed_delta": 0.05, "settle_ticks": 40, "warmup_ticks": 60,
+  "anchor_spawn_index": 0, "separation": 8,
+  "target_identity": "A",
+  "candidates": [
+    {"identity": "A", "blueprint": "vehicle.dodge.charger", "color": "255,255,255"},
+    {"identity": "B", "blueprint": "vehicle.dodge.charger", "color": "220,220,220"}
+  ],
+  "camera_attributes": {"exposure_mode": "histogram", "gamma": 2.2, "motion_blur_intensity": 0},
+  "weather": {"sun_altitude_angle": 65, "cloudiness": 10, "precipitation": 0, "wetness": 0, "fog_density": 0},
+  "reference": {"azimuth": 90, "elevation": 20, "distance": 12},
+  "views": [
+    {"name": "overview", "azimuth": 90, "elevation": 85, "distance": 70},
+    {"name": "descend", "azimuth": 90, "elevation": 75, "distance": 35},
+    {"name": "side", "azimuth": 90, "elevation": 35, "distance": 24},
+    {"name": "front_side", "azimuth": 45, "elevation": 20, "distance": 24},
+    {"name": "rear_side", "azimuth": 135, "elevation": 20, "distance": 24}
+  ]
+}
