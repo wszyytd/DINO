@@ -121,7 +121,7 @@ class DatasetTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(completed.returncode, 0, completed.stderr)
-            self.assertEqual(json.loads(completed.stdout)["query_count"], 18)
+            self.assertEqual(json.loads(completed.stdout)["query_count"], 12)
             self.assertFalse(out.exists())
 
 

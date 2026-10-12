@@ -4,9 +4,8 @@
   "distance": 12, "fixed_delta": 0.05, "settle_ticks": 30, "warmup_ticks": 10,
   "color": "255,255,255", "spawn_indices": [0],
   "vehicles": [
-    {"identity": "A", "blueprint": "vehicle.lincoln.mkz_2017"},
-    {"identity": "B", "blueprint": "vehicle.tesla.model3"},
-    {"identity": "C", "blueprint": "vehicle.dodge.charger_2020"}
+    {"identity": "A", "blueprint": "vehicle.lincoln.mkz"},
+    {"identity": "B", "blueprint": "vehicle.dodge.charger"}
   ],
   "reference": {"azimuth": 35, "elevation": 20},
   "views": [

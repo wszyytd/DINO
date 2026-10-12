@@ -63,7 +63,7 @@ class CaptureCleanupTests(unittest.TestCase):
         world.get_blueprint_library = lambda: SimpleNamespace(find=failed_find)
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "capture"
-            with self.assertRaisesRegex(RuntimeError, "vehicle.lincoln.mkz_2017"):
+            with self.assertRaisesRegex(RuntimeError, "vehicle.lincoln.mkz"):
                 capture(None, world, ["0.10.0", "0.10.0"], cfg, output, False)
             self.assertFalse(output.exists())
 
