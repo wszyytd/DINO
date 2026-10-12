@@ -9,6 +9,7 @@ import queue
 import re
 import sys
 import time
+import traceback
 
 import numpy as np
 from PIL import Image
@@ -80,7 +81,18 @@ def as_transform(carla, pose):
     )
 
 
+def find_blueprint(library, blueprint_id):
+    try:
+        return library.find(blueprint_id)
+    except RuntimeError as error:
+        raise RuntimeError(
+            f"Blueprint lookup failed: {blueprint_id!r}: {error}. "
+            "Check this exact ID against --inventory; no replacement was selected."
+        ) from error
+
+
 def connect(carla, cfg):
+    print(f"[connect] {cfg['host']}:{cfg['port']}", file=sys.stderr, flush=True)
     client = carla.Client(cfg["host"], cfg["port"])
     client.set_timeout(cfg["timeout"])
     versions = [client.get_client_version(), client.get_server_version()]
@@ -120,6 +132,7 @@ def next_image(world, sensor_queue, desired, cfg):
 
 
 def capture(carla, world, versions, cfg, output, take_tick_ownership):
+    print("[capture] reading world settings", file=sys.stderr, flush=True)
     initial_settings = world.get_settings()
     if initial_settings.synchronous_mode and not take_tick_ownership:
         raise RuntimeError(
@@ -130,13 +143,15 @@ def capture(carla, world, versions, cfg, output, take_tick_ownership):
             "controlled probe needs a world without existing vehicles; "
             "use a separate empty scene (existing actors are never deleted)"
         )
+    print("[capture] reading map/spawn points and blueprint library", file=sys.stderr, flush=True)
     points = world.get_map().get_spawn_points()
     library = world.get_blueprint_library()
     for i in cfg["spawn_indices"]:
         if i >= len(points):
             raise ValueError(f"spawn index {i} not available; run --inventory")
     for vehicle in cfg["vehicles"]:
-        bp = library.find(vehicle["blueprint"])
+        print(f"[capture] checking blueprint {vehicle['blueprint']}", file=sys.stderr, flush=True)
+        bp = find_blueprint(library, vehicle["blueprint"])
         if not bp.has_attribute("color"):
             raise ValueError(f"{bp.id} does not expose color; select another blueprint")
         if (
@@ -186,8 +201,9 @@ def capture(carla, world, versions, cfg, output, take_tick_ownership):
         settings.substepping = True
         settings.max_substep_delta_time = 0.01
         settings.max_substeps = max(10, math.ceil(cfg["fixed_delta"] / 0.01))
+        print("[capture] applying synchronous settings", file=sys.stderr, flush=True)
         world.apply_settings(settings)
-        sensor_bp = library.find("sensor.camera.rgb")
+        sensor_bp = find_blueprint(library, "sensor.camera.rgb")
         attributes = {
             "image_size_x": cfg["width"],
             "image_size_y": cfg["height"],
@@ -214,6 +230,7 @@ def capture(carla, world, versions, cfg, output, take_tick_ownership):
                 except queue.Empty:
                     pass
 
+        print("[capture] spawning RGB sensor", file=sys.stderr, flush=True)
         sensor = world.spawn_actor(sensor_bp, carla.Transform(carla.Location(z=100)))
         owned.append(sensor)
         sensor.listen(receive)
@@ -231,7 +248,13 @@ def capture(carla, world, versions, cfg, output, take_tick_ownership):
                             setattr(current_weather, name, value)
                     world.set_weather(current_weather)
                     for v_index, vehicle in enumerate(cfg["vehicles"]):
-                        bp = library.find(vehicle["blueprint"])
+                        print(
+                            f"[capture] spawning {vehicle['blueprint']} at point {position}, "
+                            f"weather={weather['name']}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        bp = find_blueprint(library, vehicle["blueprint"])
                         bp.set_attribute("color", cfg["color"])
                         if bp.has_attribute("role_name"):
                             bp.set_attribute("role_name", "dino_probe")
@@ -424,4 +447,5 @@ if __name__ == "__main__":
         main()
     except (ImportError, OSError, ValueError, RuntimeError, TimeoutError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
+        traceback.print_exc()
         sys.exit(2)

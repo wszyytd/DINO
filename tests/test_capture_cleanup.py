@@ -53,6 +53,20 @@ class FailingWorld:
 
 
 class CaptureCleanupTests(unittest.TestCase):
+    def test_native_lookup_error_identifies_the_blueprint(self):
+        cfg = json.loads(Path("configs/experiment.json").read_text())
+        world = FailingWorld()
+
+        def failed_find(name):
+            raise RuntimeError("std::exception")
+
+        world.get_blueprint_library = lambda: SimpleNamespace(find=failed_find)
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "capture"
+            with self.assertRaisesRegex(RuntimeError, "vehicle.lincoln.mkz_2017"):
+                capture(None, world, ["0.10.0", "0.10.0"], cfg, output, False)
+            self.assertFalse(output.exists())
+
     def test_sensor_failure_restores_world_and_records_incomplete_run(self):
         cfg = json.loads(Path("configs/experiment.json").read_text())
         world = FailingWorld()
