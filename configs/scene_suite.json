@@ -1,0 +1,11 @@
+{
+  "base_config": "two_candidates.json",
+  "cases": [
+    {"name": "silver205_Aleft", "distractor_color": "205,205,205", "swap": false},
+    {"name": "silver205_Aright", "distractor_color": "205,205,205", "swap": true},
+    {"name": "silver185_Aleft", "distractor_color": "185,185,185", "swap": false},
+    {"name": "silver185_Aright", "distractor_color": "185,185,185", "swap": true},
+    {"name": "warmgray_Aleft", "distractor_color": "220,210,190", "swap": false},
+    {"name": "warmgray_Aright", "distractor_color": "220,210,190", "swap": true}
+  ]
+}
