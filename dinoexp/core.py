@@ -94,6 +94,18 @@ def prepare_image(image, size=224):
     )
 
 
+def image_quality(image):
+    """Flag almost entirely black frames, not target identity or evidence sufficiency."""
+    rgb = np.asarray(image.convert("RGB"), dtype=np.uint8)
+    mean = float(rgb.mean())
+    dark_fraction = float((rgb.max(axis=2) <= 2).mean())
+    return {
+        "rgb_mean": mean,
+        "near_black_fraction": dark_fraction,
+        "near_black": mean < 1.0 and dark_fraction > 0.99,
+    }
+
+
 def local_box(annotation, reference, dimensions):
     if (
         annotation.get("visible") is not True

@@ -2,7 +2,9 @@ import csv
 import json
 from pathlib import Path
 
-from .core import checked_path
+from PIL import Image
+
+from .core import checked_path, image_quality
 
 
 def load_dataset(root):
@@ -36,4 +38,7 @@ def load_dataset(root):
     for r in [refs[0]] + queries:
         if not r["crop"] or not checked_path(root, r["crop"]).is_file():
             raise FileNotFoundError(f"missing crop for {r['sample_id']}: {r['crop']}")
+        with Image.open(checked_path(root, r["crop"])) as image:
+            if image_quality(image)["near_black"]:
+                raise ValueError(f"near_black crop for {r['sample_id']}; recapture before matching")
     return refs[0], queries, [r for r in rows if r["status"] == "rejected"]

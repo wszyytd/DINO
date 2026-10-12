@@ -49,6 +49,16 @@ class DatasetTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 load_dataset(root)
 
+    def test_near_black_reference_is_rejected_even_with_captured_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.make_dataset(root)
+            image = Image.new("RGB", (100, 100), "black")
+            image.putpixel((50, 50), (255, 255, 255))
+            image.save(root / "ref.png")
+            with self.assertRaisesRegex(ValueError, "near_black"):
+                load_dataset(root)
+
     def test_duplicate_reference_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

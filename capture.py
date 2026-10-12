@@ -14,7 +14,14 @@ import traceback
 import numpy as np
 from PIL import Image
 
-from dinoexp.core import camera_pose, crop_bounds, pose_matches, pose_values, project_box
+from dinoexp.core import (
+    camera_pose,
+    crop_bounds,
+    image_quality,
+    pose_matches,
+    pose_values,
+    project_box,
+)
 
 
 FIELDS = [
@@ -38,6 +45,8 @@ FIELDS = [
     "camera_pose",
     "target_pose",
     "crop_box",
+    "rgb_mean",
+    "near_black_fraction",
 ]
 
 
@@ -210,15 +219,21 @@ def capture(carla, world, versions, cfg, output, take_tick_ownership):
             "fov": cfg["fov"],
             "sensor_tick": 0,
             "motion_blur_intensity": 0,
-            "exposure_mode": "manual",
-            "exposure_compensation": 0,
-            "shutter_speed": 200,
-            "iso": 100,
-            "fstop": 2.8,
+            "exposure_mode": "histogram",
+            "gamma": 2.2,
         }
+        overrides = cfg.get("camera_attributes", {})
+        if any(
+            name in overrides for name in ("image_size_x", "image_size_y", "fov", "sensor_tick")
+        ):
+            raise ValueError("set camera dimensions/FOV/timing through the top-level config")
+        attributes.update(overrides)
         for name, value in attributes.items():
-            if sensor_bp.has_attribute(name):
-                sensor_bp.set_attribute(name, str(value))
+            if not sensor_bp.has_attribute(name):
+                raise ValueError(f"RGB camera does not support configured attribute {name}")
+            sensor_bp.set_attribute(
+                name, str(value).lower() if isinstance(value, bool) else str(value)
+            )
         frames = queue.Queue(maxsize=64)
 
         def receive(image):
@@ -351,7 +366,16 @@ def capture(carla, world, versions, cfg, output, take_tick_ownership):
                                 )
                                 rgb = Image.fromarray(bgra[:, :, :3][:, :, ::-1].copy())
                                 rgb.save(output / row["image"])
+                                quality = image_quality(rgb)
+                                row.update(
+                                    rgb_mean=quality["rgb_mean"],
+                                    near_black_fraction=quality["near_black_fraction"],
+                                )
                                 try:
+                                    if quality["near_black"]:
+                                        raise ValueError(
+                                            "near_black_image; check exposure/rendering before matching"
+                                        )
                                     box = project_box(
                                         vertices,
                                         image.transform.get_inverse_matrix(),
@@ -361,7 +385,12 @@ def capture(carla, world, versions, cfg, output, take_tick_ownership):
                                     )
                                     bounds = crop_bounds(box, image.width, image.height)
                                     row.update(crop=f"crops/{sid}.png", crop_box=json.dumps(bounds))
-                                    rgb.crop(bounds).save(output / row["crop"])
+                                    crop = rgb.crop(bounds)
+                                    crop.save(output / row["crop"])
+                                    if image_quality(crop)["near_black"]:
+                                        raise ValueError(
+                                            "near_black_crop; inspect target visibility/exposure"
+                                        )
                                     annotations[sid] = {"part": "", "visible": None, "box": None}
                                 except ValueError as error:
                                     row.update(status="rejected", reason=str(error))
@@ -371,7 +400,7 @@ def capture(carla, world, versions, cfg, output, take_tick_ownership):
                                 print(f"{sid}: {row['status']}", flush=True)
                                 if ref and row["status"] != "captured":
                                     raise RuntimeError(
-                                        "reference crop invalid; increase distance or adjust FOV"
+                                        f"reference invalid: {row.get('reason', 'unknown')}; inspect saved raw image"
                                     )
                         finally:
                             destroy(target)
