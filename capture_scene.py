@@ -23,6 +23,7 @@ from dinoexp.core import (
     project_box,
 )
 from dinoexp.scene import candidate_poses, validate_scene
+from dinoexp.environment import select_nearby_objects
 
 
 def preview(root, rows, target):
@@ -75,6 +76,7 @@ def capture_scene(carla, world, versions, cfg, root, take_tick):
     (root / "crops").mkdir()
     original_weather = world.get_weather()
     owned, targets, rows = [], [], []
+    hidden_ids = set()
     run = dict(
         config=cfg,
         versions=versions,
@@ -99,6 +101,31 @@ def capture_scene(carla, world, versions, cfg, root, take_tick):
         for key, value in cfg["weather"].items():
             setattr(weather, key, value)
         world.set_weather(weather)
+        hide = cfg.get("hide_environment_objects")
+        if hide:
+            center = tuple(sum(p[i] for p in poses) / len(poses) for i in range(3))
+            records = {}
+            for label in hide["labels"]:
+                tag = getattr(carla.CityObjectLabel, label, None)
+                if tag is None:
+                    raise RuntimeError(f"environment label unavailable: {label}")
+                nearby = select_nearby_objects(
+                    world.get_environment_objects(tag), center, hide["radius"]
+                )
+                for record in nearby:
+                    record["label"] = label
+                    records[record["id"]] = record
+            run["hidden_environment_objects"] = list(records.values())
+            if not records:
+                raise RuntimeError(
+                    "no nearby pole/light objects found; obstruction removal is not confirmed"
+                )
+            hidden_ids = set(records)
+            print(
+                f"Hiding {len(hidden_ids)} nearby pole/light objects; IDs recorded in run.json",
+                flush=True,
+            )
+            world.enable_environment_objects(hidden_ids, False)
         # Spawn BOTH before any photography; leave both alive until the run ends.
         for candidate, pose in zip(cfg["candidates"], poses, strict=True):
             bp = find_blueprint(library, candidate["blueprint"])
@@ -263,10 +290,16 @@ def capture_scene(carla, world, versions, cfg, root, take_tick):
                     raise RuntimeError("destroy returned false")
             except Exception as error:
                 run["cleanup_errors"].append(f"actor {actor.id}: {error}")
-        for name, restore in [
+        restore_actions = [
             ("weather", lambda: world.set_weather(original_weather)),
             ("settings", lambda: world.apply_settings(initial)),
-        ]:
+        ]
+        if hidden_ids:
+            restore_actions.insert(
+                0,
+                ("environment_objects", lambda: world.enable_environment_objects(hidden_ids, True)),
+            )
+        for name, restore in restore_actions:
             try:
                 restore()
             except Exception as error:

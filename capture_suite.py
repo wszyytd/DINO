@@ -19,6 +19,9 @@ def main():
     parser.add_argument("--output", type=Path, default=Path("data/suite01"))
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--take-tick-ownership", action="store_true")
+    parser.add_argument(
+        "--reference-source", type=Path, help="reuse reference from an existing captured scene"
+    )
     args = parser.parse_args()
     spec = json.loads(args.suite.read_text(encoding="utf-8-sig"))
     base = json.loads(
@@ -32,13 +35,16 @@ def main():
             f"{len(cases)} conditions, {len(cases) * len(base['views'])} shared observations; 1 common reference"
         )
         return
+    reference_source = args.reference_source.resolve() if args.reference_source else None
+    if reference_source:
+        load_dataset(reference_source)
     root = args.output.resolve()
     root.mkdir(parents=True, exist_ok=False)
     (root / "_configs").mkdir()
     manifest = dict(
         status="incomplete",
         conditions=[],
-        shared_reference=cases[0][0],
+        shared_reference=str(reference_source) if reference_source else cases[0][0],
         note="same map/location/weather, controlled conditions; not independent scene trials",
     )
     cards = []
@@ -59,7 +65,7 @@ def main():
                 command.append("--take-tick-ownership")
             print(f"Capturing condition: {name}", flush=True)
             subprocess.run(command, check=True)
-            reuse_reference(root / cases[0][0], destination)
+            reuse_reference(reference_source or root / cases[0][0], destination)
             ref, queries, rejected = load_dataset(destination)
             if rejected:
                 raise ValueError(f"{name} contains rejected views; inspect before continuing")

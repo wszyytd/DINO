@@ -74,6 +74,7 @@ def reuse_reference(source, destination):
     run = json.loads(run_path.read_text(encoding="utf-8"))
     run["reference_source"] = dict(
         scene=source.name,
+        source_path=str(source.resolve()),
         crop_sha256=hashlib.sha256(checked_path(source, ref["crop"]).read_bytes()).hexdigest(),
         note="reference frame/pose belong to source scene; query frames belong to this scene",
     )

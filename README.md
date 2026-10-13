@@ -1,5 +1,26 @@
 # 相似车辆辨识信号实验
 
+## 去掉灯杆遮挡，重拍警车对照
+
+```bash
+conda activate carla10
+python capture_suite.py --suite configs/model_suite_no_poles.json \
+  --reference-source data/model_suite01/charger_variant_Aleft \
+  --output data/model_suite02
+```
+
+保留前一批的车辆型号、颜色、位置交换、相机视点和光照；复用前一批同一张参考图。
+通过 [CARLA UE5 环境对象接口](https://carla-ue5.readthedocs.io/en/latest/python_api/)
+临时隐藏场景中心 30 m 内的 Poles、TrafficLight 环境对象，不移动相机来避开灯杆。
+`run.json.hidden_environment_objects` 记录对象名称、ID、标签、位置和距离。
+这是附近相关类别对象的隐藏，不是精确只删掉一根灯杆；背景和阴影也可能改变。
+对象隐藏后的实际效果须检查 `images/side.png` 和两个候选裁剪，不能仅凭 API 调用声称无遮挡。
+若没有匹配对象或接口失败会停止，不静默继续。在专用、环境对象初始可见的空场景运行；
+结束或异常时重新启用本次记录的对象，然后恢复天气和世界设置。
+此接口无法查询每个对象之前的启用状态，因此不要与其他环境对象隐藏客户端同时运行。
+强制杀进程可能来不及恢复。若遮挡物实际属于别的标签，先检查 run.json 和图像再定位。
+原 `data/model_suite01` 和旧结果保持不变；新的总览页在 `data/model_suite02/suite_preview.html`。
+
 ## 同色车型变体对照（优先预览）
 
 ```bash

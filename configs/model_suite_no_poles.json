@@ -1,0 +1,9 @@
+{
+  "base_config": "two_candidates_no_poles.json",
+  "title": "Charger 变体：隐藏附近灯杆后的对照",
+  "description": "车辆型号、颜色、位置与视点保持不变；临时隐藏附近灯杆和信号灯环境对象，记录 ID 并在采集后恢复。实际无遮挡须查看图片确认。",
+  "cases": [
+    {"name": "charger_variant_Aleft", "distractor_blueprint": "vehicle.dodgecop.charger", "distractor_color": "255,255,255", "swap": false},
+    {"name": "charger_variant_Aright", "distractor_blueprint": "vehicle.dodgecop.charger", "distractor_color": "255,255,255", "swap": true}
+  ]
+}
