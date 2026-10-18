@@ -1,5 +1,19 @@
 # 相似车辆辨识信号实验
 
+## 新增：CARLA 照片的车辆部件分割
+
+读取既有 `metadata.csv` 与车辆裁剪，使用公开 AutoInspect YOLO 部件权重，输出原始尺寸掩膜、局部裁剪、置信度和 HTML 预览。支持单场景或整个 suite；不需要启动 CARLA。
+
+```bash
+python -m pip install -r requirements-parts.txt
+python segment_parts.py --data data/model_suite02 --dry-run
+python segment_parts.py --data data/model_suite02 --output out/parts01 --device auto
+```
+
+首次自动下载专用权重，也可用 `--weights models/parts_segmentation.pt` 离线运行。下载整个 `out/parts01` 后打开 `index.html`。模型置信度不是可检验性或身份概率；未检出部件不排除车辆。
+
+详细说明、服务器命令、输出格式和接入现有 DINO 的方法见 [车辆部件分割](docs/vehicle-parts.md)。
+
 ## 去掉灯杆遮挡，重拍警车对照
 
 ```bash

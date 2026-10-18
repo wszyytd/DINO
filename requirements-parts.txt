@@ -1,0 +1,3 @@
+-r requirements-model.txt
+ultralytics>=8.4,<9
+huggingface_hub>=0.26,<2
