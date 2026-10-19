@@ -14,11 +14,29 @@ from dinoexp.suite import build_cases, reuse_reference
 from dinoexp.scene import with_resolution
 
 
+def check_connection(config):
+    """Read-only preflight before any suite output directory is created."""
+    try:
+        import carla
+        from capture import connect
+
+        _, world, versions = connect(carla, config)
+        print(f"[preflight] CARLA {versions}; map: {world.get_map().name}", flush=True)
+    except (ImportError, RuntimeError, OSError) as error:
+        raise RuntimeError(
+            f"CARLA preflight failed at {config['host']}:{config['port']}: {error}. "
+            "Start the CARLA simulator, wait for its world to load, then retry. "
+            "Activating a conda environment does not start CARLA. No suite output was created."
+        ) from error
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--suite", type=Path, default=Path("configs/scene_suite.json"))
     parser.add_argument("--output", type=Path, default=Path("data/suite01"))
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--check-connection", action="store_true",
+                        help="read-only CARLA connection check; no capture or output")
     parser.add_argument("--take-tick-ownership", action="store_true")
     parser.add_argument("--width", type=int, help="native RGB sensor width; requires --height")
     parser.add_argument("--height", type=int, help="native RGB sensor height; keeps aspect ratio")
@@ -26,6 +44,8 @@ def main():
         "--reference-source", type=Path, help="reuse reference from an existing captured scene"
     )
     args = parser.parse_args()
+    if args.dry_run and args.check_connection:
+        raise ValueError("choose --dry-run or --check-connection")
     spec = json.loads(args.suite.read_text(encoding="utf-8-sig"))
     base = json.loads(
         checked_path(args.suite.parent, spec["base_config"]).read_text(encoding="utf-8-sig")
@@ -40,10 +60,16 @@ def main():
             f"{len(cases)} conditions, {len(cases) * len(base['views'])} shared observations; 1 common reference"
         )
         return
+    if args.check_connection:
+        check_connection(base)
+        return
     reference_source = args.reference_source.resolve() if args.reference_source else None
     if reference_source:
         load_dataset(reference_source)
     root = args.output.resolve()
+    if root.exists():
+        raise ValueError(f"output already exists: {root}; choose a new --output, do not overwrite")
+    check_connection(base)
     root.mkdir(parents=True, exist_ok=False)
     (root / "_configs").mkdir()
     manifest = dict(
@@ -102,4 +128,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (ImportError, OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        sys.exit(2)

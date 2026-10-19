@@ -3,6 +3,52 @@
 这一轮先验证：提高原始相机分辨率，是否改善部件定位；再保存可追溯的局部比较与人工审核。
 没有新增自动排除、身份概率、自动可检验性估计、世界模型或无人机控制。
 
+## 推荐：先启动 CARLA，再执行完整流程
+
+`conda activate carla10` 只切换 Python 环境，不会启动仿真器。
+你之前的 `carla/docs/setup-server.md` 记录的发行包目录是下面这个路径。
+在服务器第一个终端启动并保持运行，等待地图加载完成：
+
+```bash
+cd /mnt/fast18/sunbo/CARLA-0.10.0/Carla-0.10.0-Linux-Shipping
+LANG=C.UTF-8 LC_ALL=C.UTF-8 ./CarlaUnreal.sh -RenderOffScreen -nosound
+```
+
+第二个终端：
+
+```bash
+cd /mnt/fast18/sunbo/DINO
+git pull --ff-only origin main
+conda activate dino-probe
+
+# 可先只检查计划，不连接仿真器，也不创建目录
+python run_probe.py --dry-run
+
+# 自动使用 carla10 采集，再使用 dino-probe 分割和比较
+python -u run_probe.py
+```
+
+入口默认2048×1536、CPU推理、原始侧面参考图和去灯杆后的两车配置。
+每次打印 UTC 时间命名的新采集目录与输出目录，不覆盖旧数据。
+任一步失败立即停止，后续不会对不存在的数据继续运行。
+成功后下载最后打印的 `out/probe_<时间>-evidence` 整个目录，打开 `index.html`。
+如需离线 DINO，给 `run_probe.py` 补 `--model-repo /path/to/dinov2 --checkpoint /path/to/weights.pth`。
+也可指定唯一名称 `--name probe04`，已存在则拒绝运行；省略名称即可生成新的运行ID。
+
+只检查 CARLA RPC 与地图读取：
+
+```bash
+conda run --no-capture-output -n carla10 python capture_suite.py \
+  --suite configs/model_suite_no_poles.json --check-connection
+```
+
+`Connection refused` 表示该次未连上配置的 RPC 地址，先检查仿真器进程、端口及启动日志。
+连接检查不拍摄、不生成车辆、不推进仿真帧、不创建输出目录。
+正常 suite 采集也会在创建目录前检查连接。中途失败仍会保留不完整数据供诊断。
+已经失败的 `data/model_suite03` 无须删除，新入口会使用新目录。
+
+以下保留分步执行方法；手工执行时，上一步成功后再运行下一步。
+
 ## 1. 同位置、高分辨率重拍
 
 CARLA 启动在 Town10HD_Opt，场内没有其他车辆，停止其他控制同步 tick 的客户端。

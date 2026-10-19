@@ -13,6 +13,11 @@ python evidence.py --parts-run out/parts02 --output out/evidence03
 
 完整的重拍、分割、比较与审核命令见 [高分辨率采集与证据记录](docs/evidence-ledger.md)。
 
+启动 CARLA 后可直接 `python -u run_probe.py`，入口自动切换采集／模型 Conda 环境，
+使用新的运行目录，并在任一步失败时停止后续流程。
+`python run_probe.py --dry-run` 只打印计划；
+`conda run -n carla10 python capture_suite.py --check-connection` 只检查仿真器连接。
+
 ## 新增：CARLA 照片的车辆部件分割
 
 读取既有 `metadata.csv` 与车辆裁剪，使用公开 AutoInspect YOLO 部件权重，输出原始尺寸掩膜、局部裁剪、置信度和 HTML 预览。支持单场景或整个 suite；不需要启动 CARLA。
