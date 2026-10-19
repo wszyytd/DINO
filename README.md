@@ -1,5 +1,18 @@
 # 相似车辆辨识信号实验
 
+## 新增：高分辨率采集与证据记录
+
+`capture_scene.py` 和 `capture_suite.py` 支持 `--width 2048 --height 1536`，
+保持原宽高比、拍摄位置和 FOV，提高相机原始采样分辨率。
+`evidence.py` 将部件分割结果整理成可下载的图片对照和人工审核页面，
+可选运行 DINOv2 局部比较，并按候选、部位整理历史。未知、重复检出与低分均不触发排除。
+
+```bash
+python evidence.py --parts-run out/parts02 --output out/evidence03
+```
+
+完整的重拍、分割、比较与审核命令见 [高分辨率采集与证据记录](docs/evidence-ledger.md)。
+
 ## 新增：CARLA 照片的车辆部件分割
 
 读取既有 `metadata.csv` 与车辆裁剪，使用公开 AutoInspect YOLO 部件权重，输出原始尺寸掩膜、局部裁剪、置信度和 HTML 预览。支持单场景或整个 suite；不需要启动 CARLA。

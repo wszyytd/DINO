@@ -22,7 +22,7 @@ from dinoexp.core import (
     pose_values,
     project_box,
 )
-from dinoexp.scene import candidate_poses, validate_scene
+from dinoexp.scene import candidate_poses, validate_scene, with_resolution
 from dinoexp.environment import select_nearby_objects
 
 
@@ -317,8 +317,12 @@ def main():
     parser.add_argument("--output", type=Path, default=Path("data/scene01"))
     parser.add_argument("--take-tick-ownership", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--width", type=int, help="native RGB sensor width; requires --height")
+    parser.add_argument("--height", type=int, help="native RGB sensor height; keeps aspect ratio")
     args = parser.parse_args()
-    cfg = validate_scene(json.loads(args.config.read_text(encoding="utf-8-sig")))
+    cfg = validate_scene(with_resolution(
+        json.loads(args.config.read_text(encoding="utf-8-sig")), args.width, args.height
+    ))
     if args.dry_run:
         print(
             json.dumps(

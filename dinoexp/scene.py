@@ -1,5 +1,20 @@
 import math
 import re
+import copy
+
+
+def with_resolution(config, width=None, height=None):
+    """Change native sensor pixels, preserving aspect ratio and observation geometry."""
+    result = copy.deepcopy(config)
+    if width is None and height is None:
+        return result
+    if (type(width) is not int or type(height) is not int
+            or width <= 0 or height <= 0):
+        raise ValueError("provide both --width and --height as positive integers")
+    if width * config['height'] != height * config['width']:
+        raise ValueError("resolution control must preserve original aspect ratio")
+    result.update(width=width, height=height)
+    return result
 
 
 def candidate_poses(anchor, separation):

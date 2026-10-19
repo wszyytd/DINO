@@ -11,6 +11,7 @@ from capture_scene import preview
 from dinoexp.core import checked_path
 from dinoexp.dataset import load_dataset
 from dinoexp.suite import build_cases, reuse_reference
+from dinoexp.scene import with_resolution
 
 
 def main():
@@ -19,6 +20,8 @@ def main():
     parser.add_argument("--output", type=Path, default=Path("data/suite01"))
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--take-tick-ownership", action="store_true")
+    parser.add_argument("--width", type=int, help="native RGB sensor width; requires --height")
+    parser.add_argument("--height", type=int, help="native RGB sensor height; keeps aspect ratio")
     parser.add_argument(
         "--reference-source", type=Path, help="reuse reference from an existing captured scene"
     )
@@ -27,8 +30,10 @@ def main():
     base = json.loads(
         checked_path(args.suite.parent, spec["base_config"]).read_text(encoding="utf-8-sig")
     )
+    base = with_resolution(base, args.width, args.height)
     cases = build_cases(base, spec)
     if args.dry_run:
+        print(f"Native camera: {base['width']}x{base['height']}; FOV: {base['fov']}")
         for name, cfg in cases:
             print(name, [(c["identity"], c["color"]) for c in cfg["candidates"]])
         print(
