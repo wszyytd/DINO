@@ -15,6 +15,7 @@ from dinoexp.parts import (
     discover_scenes,
     export_prediction,
     file_token,
+    file_sha256,
     make_roi_annotations,
 )
 
@@ -135,7 +136,12 @@ def preview(output, samples, run):
 
 
 def run_inference(args, scenes, model, weights, versions):
-    names, class_ids = selected_classes(model.names, args.parts)
+    native_predict = getattr(model, "predict_parts", None)
+    if callable(native_predict):
+        names = model.names
+        class_ids = list(names)
+    else:
+        names, class_ids = selected_classes(model.names, args.parts)
     if getattr(model, "task", None) != "segment":
         raise ValueError("checkpoint task must be segment")
     args.output.mkdir(parents=True, exist_ok=False)
@@ -144,7 +150,7 @@ def run_inference(args, scenes, model, weights, versions):
         warning="No visibility/identity probability or exclusion decision",
         data=str(args.data.resolve()),
         weights=str(weights.resolve()),
-        checkpoint_sha256=hashlib.sha256(weights.read_bytes()).hexdigest(),
+        checkpoint_sha256=file_sha256(weights),
         model_repo=None if args.weights else args.model_repo,
         requested_revision=None if args.weights else args.revision,
         versions=versions,
@@ -158,6 +164,14 @@ def run_inference(args, scenes, model, weights, versions):
         model_input="RGB pixels only; identity/role labels used for reporting only",
         scenes=[],
     )
+    manifest["backend"] = getattr(model, "backend", "ultralytics")
+    if callable(native_predict):
+        manifest.update(
+            prompts=model.prompts,
+            class_semantics="text-prompt-conditioned proposals; side/front/rear not verified",
+            nms="none across prompts; overlapping and duplicate masks retained for review",
+            preprocess="official SAM3 processor: RGB resize to 1008x1008, normalization [-1,1]",
+        )
     write_json(args.output / "parts_run.json", manifest)
     samples, flat = [], []
     try:
@@ -184,20 +198,23 @@ def run_inference(args, scenes, model, weights, versions):
                     f"[parts] {scene['name']} / {row['sample_id']} {image.width}x{image.height}",
                     flush=True,
                 )
-                predictions = model.predict(
-                    source=image,
-                    imgsz=args.imgsz,
-                    conf=args.conf,
-                    iou=args.iou,
-                    device=args.device,
-                    classes=class_ids,
-                    retina_masks=True,
-                    verbose=False,
-                    save=False,
-                )
-                if len(predictions) != 1:
-                    raise ValueError("expected exactly one prediction for one crop")
-                detections = decode_result(predictions[0], names, image.size)
+                if callable(native_predict):
+                    detections = native_predict(image)
+                else:
+                    predictions = model.predict(
+                        source=image,
+                        imgsz=args.imgsz,
+                        conf=args.conf,
+                        iou=args.iou,
+                        device=args.device,
+                        classes=class_ids,
+                        retina_masks=True,
+                        verbose=False,
+                        save=False,
+                    )
+                    if len(predictions) != 1:
+                        raise ValueError("expected exactly one prediction for one crop")
+                    detections = decode_result(predictions[0], names, image.size)
                 records = export_prediction(
                     image, detections, destination, f"s{index:04d}"
                 )
@@ -215,6 +232,8 @@ def run_inference(args, scenes, model, weights, versions):
                         source_crop=str(source),
                         source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
                     )
+                    if callable(native_predict):
+                        record["text_prompt"] = model.prompt_texts.get(record["class_name"])
                 sample = dict(
                     scene=scene["name"],
                     sample_id=row["sample_id"],

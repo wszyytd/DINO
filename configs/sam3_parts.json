@@ -1,0 +1,9 @@
+[
+  {"label": "car_door", "text": "car door"},
+  {"label": "front_door", "text": "front car door"},
+  {"label": "rear_door", "text": "rear car door"},
+  {"label": "side_window", "text": "side window"},
+  {"label": "windshield", "text": "windshield"},
+  {"label": "rear_windshield", "text": "rear windshield"},
+  {"label": "roof", "text": "car roof"}
+]

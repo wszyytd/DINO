@@ -1,5 +1,12 @@
 # 相似车辆辨识信号实验
 
+## 新增：SAM 3 部位定位对照
+
+`segment_sam3.py` 对现有车辆裁剪独立测试车门、前后门、侧窗和挡风玻璃提示，
+`compare_parts.py` 生成同一批图的 YOLO/SAM 3 对照页。无需再次拍摄。
+官方权重需账号申请访问；尚未完成真实 SAM 3 效果验证。
+环境、授权与运行命令见 [SAM 3 对照说明](docs/sam3-parts.md)。
+
 ## 新增：高分辨率采集与证据记录
 
 `capture_scene.py` 和 `capture_suite.py` 支持 `--width 2048 --height 1536`，

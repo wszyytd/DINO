@@ -13,6 +13,14 @@ from .core import checked_path
 from .dataset import load_dataset
 
 
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def file_token(text):
     value = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(text)).strip("._") or "item"
     if value != text:

@@ -1,0 +1,9 @@
+-r requirements.txt
+numpy>=1.26,<2
+torch>=2.7,<3
+torchvision>=0.22
+huggingface-hub>=0.26,<2
+einops>=0.8
+psutil>=5.9
+setuptools<81
+# Install the official SAM 3 repository separately; see docs/sam3-parts.md.
