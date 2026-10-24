@@ -1,5 +1,20 @@
 # 相似车辆辨识信号实验
 
+## 新增：可训练局部注意力匹配
+
+冻结DINOv2空间特征，训练参考／候选适配器、学习查询与交叉注意力匹配头。
+使用已有CARLA裁剪，不需要先分割车门车窗，并与相同输入的CLS余弦对照。
+这是老师思路的第一步候选匹配实验；整图搜索融合、时序证据聚合与自动排除尚未实现。
+
+```bash
+python run_local_probe.py --data data/probe_20261019_020829_292286 \
+  --model-repo /path/to/dinov2_repo --backbone /path/to/dinov2_vits14_pretrain.pth \
+  --output out/local_match01 --device cuda --epochs 30
+```
+
+现有两车数据只做训练拟合检查，不报告独立验证性能。安装、分步训练和隔离验证说明见
+[局部匹配实验](docs/local-attention-matcher.md)。
+
 ## 新增：SAM 3 部位定位对照
 
 `segment_sam3.py` 对现有车辆裁剪独立测试车门、前后门、侧窗和挡风玻璃提示，

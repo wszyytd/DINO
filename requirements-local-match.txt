@@ -1,0 +1,3 @@
+# Install a Torch build appropriate for the server driver before this file.
+-r requirements-model.txt
+# No torchvision, segmentation model, CARLA process or xFormers needed by this head.
