@@ -24,6 +24,7 @@ class LocalFeaturesTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            (root / 'hubconf.py').write_text('# fixture')
             for i in range(2):
                 Image.new('RGB', (28, 14), (100 + i * 20, 50, 60)).save(root / f'{i}.png')
             r, q = (sha256(root / f'{i}.png') for i in range(2))

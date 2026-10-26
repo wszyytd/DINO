@@ -9,6 +9,7 @@ from PIL import Image, ImageOps
 
 from .core import checked_path, prepare_image
 from .local_pairs import read_manifest, sha256, verify_images
+from .local_paths import resolve_backbone_paths
 
 
 def preprocess(image, size):
@@ -67,9 +68,11 @@ def extract_cache(manifests, data_root, output, model_repo, checkpoint,
         raise ValueError('image size must be divisible by 14; positive batch size required')
     if not layers or list(layers) != sorted(set(layers)) or min(layers) < 1 or max(layers) > 12:
         raise ValueError('layers must be unique increasing one-based indices in [1,12]')
-    output, checkpoint = Path(output), Path(checkpoint)
+    output = Path(output)
     if output.exists():
         raise ValueError('cache output already exists; choose a new directory')
+    model_repo, checkpoint = resolve_backbone_paths(
+        model_repo, checkpoint, model_name, Path(__file__).resolve().parent.parent)
     images = {}
     for manifest_path in manifests:
         manifest = read_manifest(manifest_path)

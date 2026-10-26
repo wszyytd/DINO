@@ -27,25 +27,26 @@ python -m pip install -r requirements-local-match.txt
 python -c "import torch; print(torch.__version__); print(torch.cuda.is_available())"
 ```
 
-模型代码和官方骨干权重需要指定实际路径。下面环境变量仅是位置示例，改成服务器现有路径；匹配`dinov2_vits14`的必须是ViT-S/14权重。无需老师的权重、SAM、Ultralytics或CARLA仿真器进程。
+入口现在会在PyTorch Hub缓存、项目的models目录及项目附近的常用目录中寻找已有DINOv2源码和对应官方骨干权重，无需填写路径占位符。不会自动下载或改变Torch／驱动。无需老师的权重、SAM、Ultralytics或CARLA仿真器进程。
 
 ```bash
-export DINO_REPO=/实际路径/dinov2_repo
-export DINO_BACKBONE=/实际路径/dinov2_vits14_pretrain.pth
-
 python run_local_probe.py \
   --data data/probe_20261019_020829_292286 \
-  --model-repo "$DINO_REPO" --backbone "$DINO_BACKBONE" \
-  --output out/local_match01 --device cuda --epochs 30 --dry-run
+  --device cuda --epochs 30 --dry-run
 
 # 去掉dry-run，实际依次配对、提特征、训练和导出
 python -u run_local_probe.py \
   --data data/probe_20261019_020829_292286 \
-  --model-repo "$DINO_REPO" --backbone "$DINO_BACKBONE" \
-  --output out/local_match01 --device cuda --epochs 30
+  --device cuda --epochs 30
 ```
 
-任何阶段失败立即停止，已完成的文件保留，重试选择新输出名。`--dry-run`不会建立目录。没有CUDA时可用`--device cpu`。显存不足可以先降低`--batch-size 1`。
+默认按UTC时间自动生成新输出目录，之前失败的`out/local_match01`可以保留。任何阶段失败立即停止，已完成的文件保留。`--dry-run`也会核查路径，但不会建立目录。没有CUDA时可用`--device cpu`。显存不足可以先降低`--batch-size 1`。
+
+如果资产在其他目录，仍可通过`--model-repo`和`--backbone`显式指定，或设置`DINO_REPO`与`DINO_BACKBONE`。源码目录必须包含`hubconf.py`，权重必须是现存非空文件。旧文档中`/实际路径/...`是占位符，不能作为真实目录使用；从环境变量读到这种占位符时会忽略它并继续查找缓存。显式传入错误路径则直接报错，不会先创建配对输出。
+
+找不到资产时会列出检查过的路径并停止；请把该输出提供给协助排查的人，而不要继续用猜测路径运行。默认ViT-S只寻找`dinov2_vits14_pretrain.pth`，不会把ViT-B权重当作替代。
+
+2026年10月26日的路径修复已通过82项测试，包含缓存查找、旧占位环境变量、错误路径提前停止，以及补丁前后的训练流程回归检查。服务器是否存在相应缓存仍需运行命令核实。
 
 首次运行使用全部20组已确认配对做**训练拟合检查**，不是验证实验。高空图可能本身没有足够身份信息，监督标签并不保证该张图可辨认，不应把训练目标误读成模型必须在所有视点给出确定身份。
 
@@ -62,7 +63,6 @@ python prepare_pairs.py \
 
 python cache_local_features.py \
   --manifest out/pairs01.json --data-root data \
-  --model-repo "$DINO_REPO" --checkpoint "$DINO_BACKBONE" \
   --output out/features01 --device cuda
 
 python train_local_matcher.py \
@@ -95,8 +95,7 @@ python evaluate_local_matcher.py \
 ```bash
 python cache_local_features.py \
   --manifest out/train_pairs.json --manifest out/val_pairs.json \
-  --data-root data --model-repo "$DINO_REPO" --checkpoint "$DINO_BACKBONE" \
-  --output out/trainval_features --device cuda
+  --data-root data --output out/trainval_features --device cuda
 
 python train_local_matcher.py \
   --train-manifest out/train_pairs.json --val-manifest out/val_pairs.json \

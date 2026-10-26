@@ -6,12 +6,14 @@ from pathlib import Path
 import subprocess
 import sys
 
+from dinoexp.local_paths import resolve_backbone_paths
+
 
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--data', type=Path, required=True, help='existing scene or suite directory')
-    p.add_argument('--model-repo', type=Path, required=True)
-    p.add_argument('--backbone', type=Path, required=True, help='official frozen DINOv2 checkpoint')
+    p.add_argument('--model-repo', type=Path, help='existing source; otherwise discover local cache')
+    p.add_argument('--backbone', type=Path, help='official checkpoint; otherwise discover local cache')
     p.add_argument('--output', type=Path, default=Path('out') / (
         'local_match_' + datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_%f')))
     p.add_argument('--group', default='charger-location0-pilot',
@@ -31,6 +33,11 @@ def make_plan(args):
         raise ValueError('output directory already exists; choose a new run name')
     scripts = Path(__file__).resolve().parent
     root = args.data.resolve()
+    repo, backbone = resolve_backbone_paths(args.model_repo, args.backbone, args.model, scripts)
+    if not root.is_dir():
+        raise ValueError(f'capture data directory does not exist: {root}')
+    if args.size <= 0 or args.size % 14 or min(args.epochs, args.batch_size, args.threads) < 1:
+        raise ValueError('size must be divisible by 14; epochs, batch size and threads must be positive')
     pairs = args.output / 'pairs.json'
     cache, train, report = (args.output / p for p in ('features', 'train', 'evaluation'))
     def command(script, *arguments):
@@ -39,7 +46,7 @@ def make_plan(args):
         command('prepare_pairs.py', '--data-root', root.parent, '--dataset', root.name,
                 '--group', args.group, '--output', pairs),
         command('cache_local_features.py', '--manifest', pairs, '--data-root', root.parent,
-                '--output', cache, '--model-repo', args.model_repo, '--checkpoint', args.backbone,
+                '--output', cache, '--model-repo', repo, '--checkpoint', backbone,
                 '--model', args.model, '--size', args.size, '--device', args.device,
                 '--batch-size', args.batch_size),
         command('train_local_matcher.py', '--train-manifest', pairs, '--cache', cache,
@@ -71,4 +78,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        print(f'ERROR: {error}', file=sys.stderr)
+        sys.exit(2)
