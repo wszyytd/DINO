@@ -19,8 +19,8 @@ def choose_models(available, explicit=None):
     available = set(available)
     if explicit is not None:
         selected = list(explicit)
-        if len(selected) != 8 or len(set(selected)) != 8 or set(selected) - available:
-            raise ValueError('need exactly eight distinct available four-wheel colored vehicle assets')
+        if not 6 <= len(selected) <= 8 or len(set(selected)) != len(selected) or set(selected) - available:
+            raise ValueError('need six to eight distinct available four-wheel colored vehicle assets')
         return selected
     preferred = ['vehicle.dodge.charger', 'vehicle.lincoln.mkz', 'vehicle.audi.a2',
                  'vehicle.audi.tt', 'vehicle.tesla.model3', 'vehicle.bmw.grandtourer',
@@ -30,8 +30,8 @@ def choose_models(available, explicit=None):
                 ('cop', 'police', 'ambulance', 'firetruck', 'truck', 'bus', 'sprinter'))]
     selected = [m for m in preferred if m in eligible]
     selected += sorted(set(eligible) - set(selected))
-    if len(selected) < 8:
-        raise ValueError(f'need eight eligible assets, found {len(selected)}: {selected}. '
+    if len(selected) < 6:
+        raise ValueError(f'need at least six eligible assets, found {len(selected)}: {selected}. '
                          'Inspect the actual CARLA inventory; no photos were collected.')
     return selected[:8]
 
@@ -54,22 +54,27 @@ def select_anchors(points, count=9, minimum_distance=80):
 
 
 def build_plan(base, models, anchors, seed=11):
-    if len(models) != 8 or len(set(models)) != 8 or len(anchors) != 9:
-        raise ValueError('capture plan requires eight distinct models and nine anchors')
+    if not 6 <= len(models) <= 8 or len(set(models)) != len(models) or len(anchors) != 9:
+        raise ValueError('capture plan requires six to eight distinct models and nine anchors')
     if len({a['index'] for a in anchors}) != 9:
         raise ValueError('anchors must be distinct')
     models, anchors = list(models), list(anchors)
     rng = random.Random(seed)
     rng.shuffle(models)
     rng.shuffle(anchors)
-    splits = {'train': (models[:4], anchors[:3]),
-              'val': (models[4:6], anchors[3:6]), 'test': (models[6:], anchors[6:])}
+    train_count = len(models) - 4
+    splits = {'train': (models[:train_count], anchors[:3]),
+              'val': (models[train_count:train_count + 2], anchors[3:6]),
+              'test': (models[train_count + 2:], anchors[6:])}
     cases = []
     for split, (assets, locations) in splits.items():
-        for pair in range(0, len(assets), 2):
+        # With three training assets, a cycle gives every asset two pairings.
+        pairs = (list(zip(assets, assets[1:] + assets[:1], strict=True)) if len(assets) % 2
+                 else list(zip(assets[::2], assets[1::2], strict=True)))
+        for pair_index, pair_assets in enumerate(pairs):
             for loc, anchor in enumerate(locations):
                 for lighting in range(2):
-                    group = f'{split}_pair{pair // 2}_location{loc}_light{lighting}'
+                    group = f'{split}_pair{pair_index}_location{loc}_light{lighting}'
                     for target in ('A', 'B'):
                         cfg = copy.deepcopy(base)
                         cfg.pop('hide_environment_objects', None)
@@ -84,7 +89,7 @@ def build_plan(base, models, anchors, seed=11):
                         cfg['candidates'] = [dict(identity=identity, blueprint=blueprint, color=color,
                             yaw_offset=(180 if i == (loc + lighting) % 2 else 0))
                             for i, (identity, blueprint) in enumerate(
-                                zip(('A', 'B'), assets[pair:pair + 2], strict=True))]
+                                zip(('A', 'B'), pair_assets, strict=True))]
                         if (loc + lighting) % 2:
                             cfg['candidates'].reverse()
                         cfg['reference'] = dict(azimuth=(90 if target == 'A' else 270),

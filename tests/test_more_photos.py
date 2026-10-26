@@ -45,9 +45,31 @@ class MorePhotoTests(unittest.TestCase):
         self.assertTrue(set(chosen) <= set(available))
         self.assertFalse(any('cop' in m or 'ambulance' in m for m in chosen))
         with self.assertRaises(ValueError):
-            choose_models(self.models[:6])
+            choose_models(self.models[:5])
         with self.assertRaises(ValueError):
             choose_models(self.models, self.models[:7] + ['vehicle.missing.car'])
+
+    def test_actual_seven_asset_inventory_keeps_splits_disjoint_and_all_models_used(self):
+        available = ['vehicle.dodge.charger', 'vehicle.lincoln.mkz', 'vehicle.nissan.patrol',
+                     'vehicle.carlacola.actors', 'vehicle.fuso.mitsubishi',
+                     'vehicle.mini.cooper', 'vehicle.taxi.ford']
+        chosen = choose_models(available)
+        self.assertEqual(set(chosen), set(available))
+        plan = build_plan(self.base, chosen, select_anchors(self.points))
+        splits = plan['split_models']
+        self.assertEqual([len(splits[s]) for s in ('train', 'val', 'test')], [3, 2, 2])
+        self.assertFalse(set(splits['train']) & (set(splits['val']) | set(splits['test'])))
+        self.assertFalse(set(splits['val']) & set(splits['test']))
+        self.assertEqual({c['blueprint'] for case in plan['cases']
+                          for c in case['config']['candidates']}, set(available))
+        self.assertTrue(all(len(case['config']['candidates']) == 2 for case in plan['cases']))
+        self.assertEqual(plan['expected_query_crops'] + plan['expected_reference_crops'], 1260)
+
+    def test_six_models_can_still_form_three_disjoint_two_model_splits(self):
+        chosen = choose_models(self.models[:6], self.models[:6])
+        plan = build_plan(self.base, chosen, select_anchors(self.points))
+        self.assertEqual([len(plan['split_models'][s]) for s in ('train', 'val', 'test')], [2, 2, 2])
+        self.assertEqual(plan['expected_query_crops'] + plan['expected_reference_crops'], 756)
 
     def test_locations_must_be_spatially_separated(self):
         selected = select_anchors(self.points)

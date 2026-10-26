@@ -86,7 +86,7 @@ def main():
     p.add_argument('--host', default='127.0.0.1')
     p.add_argument('--port', type=int, default=2000)
     p.add_argument('--seed', type=int, default=11)
-    p.add_argument('--models', nargs=8, help='optional eight IDs, checked against actual inventory')
+    p.add_argument('--models', nargs='+', help='optional six to eight IDs, checked against inventory')
     p.add_argument('--min-anchor-distance', type=float, default=80)
     p.add_argument('--dry-run', action='store_true', help='read CARLA inventory, print plan, no capture')
     p.add_argument('--take-tick-ownership', action='store_true')

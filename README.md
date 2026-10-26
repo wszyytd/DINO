@@ -2,9 +2,9 @@
 
 ## 新增：约1000张多参考扩采
 
-`collect_match_photos.py`在实际CARLA资产中选择8个车型、9个分散位置，
+`collect_match_photos.py`在实际CARLA资产中自适应选择6–8个车型、9个分散位置，
 拍摄两种光照、10个视点，让两辆候选轮流作为参考。
-计划960张查询裁剪加48张参考，车型和位置按train/val/test分开。
+8车型时计划1008张裁剪，7车型1260张，6车型756张，车型和位置按train/val/test分开。
 在服务器启动CARLA后，使用`carla10`环境执行：
 
 ```bash
