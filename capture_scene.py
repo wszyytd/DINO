@@ -15,14 +15,13 @@ from PIL import Image
 
 from capture import FIELDS, as_transform, connect, find_blueprint, next_image
 from dinoexp.core import (
-    camera_pose,
     crop_bounds,
     image_quality,
     pose_matches,
     pose_values,
     project_box,
 )
-from dinoexp.scene import candidate_poses, validate_scene, with_resolution
+from dinoexp.scene import candidate_poses, capture_view_pose, validate_scene, with_resolution
 from dinoexp.environment import select_nearby_objects
 
 
@@ -65,7 +64,8 @@ def capture_scene(carla, world, versions, cfg, root, take_tick):
     index = cfg["anchor_spawn_index"]
     if not 0 <= index < len(points):
         raise ValueError("anchor_spawn_index is unavailable")
-    poses = candidate_poses(pose_values(points[index]), cfg["separation"])
+    poses = candidate_poses(pose_values(points[index]), cfg["separation"],
+                            [c.get('yaw_offset', 0) for c in cfg['candidates']])
     library = world.get_blueprint_library()
     for candidate in cfg["candidates"]:
         bp = find_blueprint(library, candidate["blueprint"])
@@ -200,13 +200,9 @@ def capture_scene(carla, world, versions, cfg, root, take_tick):
             for sequence, view in enumerate(views, start=-1):
                 ref = view["name"] == "reference"
                 center = np.mean(target[3], axis=0) if ref else group_center
-                desired = camera_pose(
-                    center,
-                    target[2].rotation.yaw,
-                    view["azimuth"],
-                    view["elevation"],
-                    view["distance"],
-                )
+                desired = capture_view_pose(center, points[index].rotation.yaw,
+                    target[2].rotation.yaw, view, is_reference=ref,
+                    query_yaw_mode=cfg.get('query_yaw_mode', 'target'))
                 sensor.set_transform(as_transform(carla, desired))
                 image = next_image(world, frames, desired, cfg)
                 if any(
@@ -233,7 +229,7 @@ def capture_scene(carla, world, versions, cfg, root, take_tick):
                         role="reference" if ref else "query",
                         sequence=sequence,
                         view=view["name"],
-                        weather="noon",
+                        weather=cfg.get('weather_name', 'noon'),
                         position=index,
                         blueprint=candidate["blueprint"],
                         status="captured",

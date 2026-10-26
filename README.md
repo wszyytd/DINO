@@ -1,5 +1,20 @@
 # 相似车辆辨识信号实验
 
+## 新增：约1000张多参考扩采
+
+`collect_match_photos.py`在实际CARLA资产中选择8个车型、9个分散位置，
+拍摄两种光照、10个视点，让两辆候选轮流作为参考。
+计划960张查询裁剪加48张参考，车型和位置按train/val/test分开。
+在服务器启动CARLA后，使用`carla10`环境执行：
+
+```bash
+python collect_match_photos.py --dry-run
+python -u collect_match_photos.py
+```
+
+采完并检查图片后，用`dino-probe`环境执行`python -u train_more_photos.py --device cuda`。
+说明及数据划分限制见[扩采与独立评估](docs/more-photos.md)。这些命令需要实际采集完成，计划和合成测试不代表已有新照片。
+
 ## 新增：可训练局部注意力匹配
 
 冻结DINOv2空间特征，训练参考／候选适配器、学习查询与交叉注意力匹配头。
