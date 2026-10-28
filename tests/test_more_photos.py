@@ -1,5 +1,9 @@
+from contextlib import redirect_stdout
+import io
 import json
+import math
 from pathlib import Path
+from types import SimpleNamespace
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -77,6 +81,54 @@ class MorePhotoTests(unittest.TestCase):
         close = [dict(index=i, pose=[i, 0, 0, 0, 0, 0]) for i in range(12)]
         with self.assertRaises(ValueError):
             select_anchors(close)
+
+    def test_default_selection_accepts_nine_spread_locations_on_a_compact_map(self):
+        compact = [dict(index=3 * x + y, pose=[50 * x, 50 * y, 0, 0, 0, 0])
+                   for x in range(3) for y in range(3)]
+        selected = select_anchors(compact)
+        self.assertEqual({point['index'] for point in selected}, set(range(9)))
+        self.assertTrue(all(math.dist(a['pose'][:2], b['pose'][:2]) >= 40
+                            for i, a in enumerate(selected) for b in selected[i + 1:]))
+        # A user's explicit constraint must never be silently relaxed.
+        with self.assertRaises(ValueError):
+            select_anchors(compact, minimum_distance=80)
+
+    def test_selection_tries_other_starts_when_the_first_spawn_blocks_a_valid_set(self):
+        points = [dict(index=i, pose=[x, 0, 0, 0, 0, 0])
+                  for i, x in enumerate((0, -50, 50))]
+        selected = select_anchors(points, count=2, minimum_distance=80)
+        self.assertEqual({point['index'] for point in selected}, {1, 2})
+
+    def test_nonfinite_or_nonpositive_explicit_spacing_cannot_disable_the_constraint(self):
+        for distance in (float('nan'), float('inf'), 0, -1):
+            with self.subTest(distance=distance), self.assertRaises(ValueError):
+                select_anchors(self.points, minimum_distance=distance)
+
+    def test_compact_map_dry_run_records_actual_spacing_without_creating_output(self):
+        from collect_match_photos import main
+        compact = [dict(index=3 * x + y, pose=[50 * x, 50 * y, 0, 0, 0, 0])
+                   for x in range(3) for y in range(3)]
+        blueprints = [SimpleNamespace(id=model, has_attribute=lambda name: True,
+                       get_attribute=lambda name: SimpleNamespace(as_int=lambda: 4))
+                      for model in self.models[:7]]
+        world = SimpleNamespace(get_blueprint_library=lambda:
+                                SimpleNamespace(filter=lambda pattern: blueprints))
+        catalog = dict(map='CompactTown', spawn_points=compact, existing_vehicles=0)
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / 'not_created'
+            printed = io.StringIO()
+            with patch.dict('sys.modules', {'carla': SimpleNamespace()}), \
+                 patch('capture.connect', return_value=(None, world, ['0.10.0', '0.10.0'])), \
+                 patch('capture.inventory', return_value=catalog), \
+                 patch('sys.argv', ['collect_match_photos.py', '--dry-run', '--output', str(output)]), \
+                 redirect_stdout(printed):
+                main()
+            plan, _ = json.JSONDecoder().raw_decode(printed.getvalue())
+            self.assertEqual(plan['anchor_selection']['mode'], 'auto')
+            self.assertEqual(plan['anchor_selection']['actual_min_distance_m'], 50)
+            self.assertEqual(len(plan['anchor_selection']['selected_spawn_points']), 9)
+            self.assertEqual(plan['expected_query_crops'], 1200)
+            self.assertFalse(output.exists())
 
     def test_vehicle_heading_can_change_without_moving_the_slots(self):
         normal = candidate_poses([0, 0, 0, 0, 0, 0], 8)

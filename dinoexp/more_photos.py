@@ -14,6 +14,9 @@ VIEWS = [
     ('opposite_rear', 225, 20, 26), ('front_high', 45, 45, 35), ('rear_high', 135, 45, 35),
 ]
 
+# Acquisition spacing only; it does not certify independent backgrounds.
+AUTO_MIN_ANCHOR_DISTANCE = 40.0
+
 
 def choose_models(available, explicit=None):
     available = set(available)
@@ -36,21 +39,42 @@ def choose_models(available, explicit=None):
     return selected[:8]
 
 
-def select_anchors(points, count=9, minimum_distance=80):
-    if count < 1 or minimum_distance <= 0 or len(points) < count:
+def select_anchors(points, count=9, minimum_distance=None):
+    """Maximize spacing with deterministic multi-start farthest-point selection.
+
+    Auto mode accepts the best set found above a 40m acquisition floor. An
+    explicit distance remains a hard constraint. This heuristic is not a proof
+    of the optimal packing or of scene independence.
+    """
+    threshold = AUTO_MIN_ANCHOR_DISTANCE if minimum_distance is None else minimum_distance
+    if count < 1 or not math.isfinite(threshold) or threshold <= 0 or len(points) < count:
         raise ValueError('need enough spawn points and a positive spacing constraint')
-    remaining = sorted(points, key=lambda p: p['index'])
-    selected = [remaining.pop(0)]
-    def distance(point):
-        return min(math.dist(point['pose'][:2], other['pose'][:2]) for other in selected)
-    while len(selected) < count:
-        point = max(remaining, key=distance)
-        if distance(point) < minimum_distance:
-            raise ValueError(f'cannot find {count} anchors at least {minimum_distance}m apart; '
-                             'use another map or explicitly adjust --min-anchor-distance')
-        selected.append(point)
-        remaining.remove(point)
-    return selected
+    ordered = sorted(points, key=lambda p: p['index'])
+    if len({p['index'] for p in ordered}) != len(ordered) or any(
+            not all(math.isfinite(v) for v in p['pose'][:2]) for p in ordered):
+        raise ValueError('spawn points need unique indices and finite XY coordinates')
+    distances = [[math.dist(a['pose'][:2], b['pose'][:2]) for b in ordered] for a in ordered]
+    best, best_spacing = [], -math.inf
+    for start in range(len(ordered)):
+        selected, spacing = [start], math.inf
+        nearest = distances[start].copy()
+        nearest[start] = -math.inf
+        while len(selected) < count:
+            point = max(range(len(ordered)), key=nearest.__getitem__)
+            spacing = min(spacing, nearest[point])
+            selected.append(point)
+            nearest = [min(previous, distance) for previous, distance in
+                       zip(nearest, distances[point], strict=True)]
+            nearest[point] = -math.inf
+        if spacing > best_spacing:
+            best, best_spacing = selected, spacing
+    if best_spacing < threshold:
+        mode = 'auto floor' if minimum_distance is None else 'explicit constraint'
+        raise ValueError(f'could not select {count} anchors from {len(ordered)} spawn points: '
+                         f'best minimum spacing found {best_spacing:.1f}m; '
+                         f'need {threshold:g}m ({mode}). Inspect the map or explicitly set '
+                         '--min-anchor-distance to a smaller positive value.')
+    return [ordered[i] for i in best]
 
 
 def build_plan(base, models, anchors, seed=11):

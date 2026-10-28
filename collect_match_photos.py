@@ -4,13 +4,15 @@ import argparse
 from datetime import datetime, timezone
 import html
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
 
 from dinoexp.dataset import load_dataset
 from dinoexp.local_pairs import build_manifest, check_split
-from dinoexp.more_photos import build_plan, choose_models, select_anchors
+from dinoexp.more_photos import (AUTO_MIN_ANCHOR_DISTANCE, build_plan, choose_models,
+                                select_anchors)
 
 
 def save_json(path, value):
@@ -87,7 +89,9 @@ def main():
     p.add_argument('--port', type=int, default=2000)
     p.add_argument('--seed', type=int, default=11)
     p.add_argument('--models', nargs='+', help='optional six to eight IDs, checked against inventory')
-    p.add_argument('--min-anchor-distance', type=float, default=80)
+    p.add_argument('--min-anchor-distance', type=float,
+                   help='strict minimum spacing in metres; default auto maximizes spacing '
+                        'with a 40m acquisition floor')
     p.add_argument('--dry-run', action='store_true', help='read CARLA inventory, print plan, no capture')
     p.add_argument('--take-tick-ownership', action='store_true')
     args = p.parse_args()
@@ -112,6 +116,15 @@ def main():
     anchors = select_anchors(catalog['spawn_points'], minimum_distance=args.min_anchor_distance)
     plan = build_plan(base, models, anchors, args.seed)
     plan['map'], plan['carla_versions'] = catalog['map'], versions
+    plan['anchor_selection'] = dict(
+        mode='auto' if args.min_anchor_distance is None else 'explicit',
+        method='deterministic_multi_start_farthest_point',
+        requested_min_distance_m=args.min_anchor_distance,
+        auto_min_distance_m=AUTO_MIN_ANCHOR_DISTANCE if args.min_anchor_distance is None else None,
+        actual_min_distance_m=min(math.dist(a['pose'][:2], b['pose'][:2])
+                                  for i, a in enumerate(anchors) for b in anchors[i + 1:]),
+        available_spawn_points=len(catalog['spawn_points']), selected_spawn_points=anchors,
+        note='Distinct capture positions within one map; camera footprints/backgrounds may overlap.')
     print(json.dumps({k: v for k, v in plan.items() if k != 'cases'}, indent=2), flush=True)
     if args.dry_run:
         print('Read-only plan. No photos captured; no output directory created.')
