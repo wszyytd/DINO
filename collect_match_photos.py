@@ -15,6 +15,7 @@ from dinoexp.local_pairs import build_manifest, check_split
 from dinoexp.more_photos import (AUTO_MIN_ANCHOR_DISTANCE, build_plan, choose_models,
                                 select_anchors)
 from dinoexp.more_resume import check_resume_environment, prepare_resume, resume_summary
+from dinoexp.more_placement import apply_placement, placement_options, probe_placement
 
 
 def save_json(path, value):
@@ -23,10 +24,13 @@ def save_json(path, value):
     temporary.replace(path)
 
 
-def capture_plan(plan, output, runner=subprocess.run, take_tick=False, *, resume=False, pilot=False):
+def capture_plan(plan, output, runner=subprocess.run, take_tick=False, *, resume=False, pilot=False,
+                 test_placement=None):
     root = Path(output).resolve()
     if resume:
         manifest, completed, _ = prepare_resume(root, pilot)
+        if test_placement is not None:
+            manifest = apply_placement(manifest, completed, test_placement)
         plan = manifest['plan']
         if manifest.get('error'):
             manifest.setdefault('previous_errors', []).append(manifest.pop('error'))
@@ -126,6 +130,8 @@ def main():
     destination.add_argument('--resume', type=Path, help='verify and continue a saved collection')
     p.add_argument('--pilot', action='store_true', help='with --resume: retain completed groups, '
                    'add only the first missing A/B reference group per split')
+    p.add_argument('--retry-test-placement', action='store_true', help='with --resume --pilot: '
+                   'probe reserved test positions and spacing before capturing either reference')
     p.add_argument('--host', default='127.0.0.1')
     p.add_argument('--port', type=int, default=2000)
     p.add_argument('--seed', type=int, default=11)
@@ -138,10 +144,17 @@ def main():
     args = p.parse_args()
     if args.pilot and not args.resume:
         raise ValueError('--pilot requires --resume')
+    if args.retry_test_placement and not (args.resume and args.pilot):
+        raise ValueError('--retry-test-placement requires --resume --pilot')
     if args.resume:
         saved, completed, remaining = prepare_resume(args.resume, args.pilot)
+        options = placement_options(saved, completed) if args.retry_test_placement else None
         if args.dry_run:
-            print(json.dumps(resume_summary(saved, completed, remaining), indent=2))
+            summary = resume_summary(saved, completed, remaining)
+            if options is not None:
+                summary['test_placement_options'] = options
+                summary['placement_warning'] = 'Live two-vehicle probe required; no position confirmed yet.'
+            print(json.dumps(summary, indent=2))
             return
         plan = saved['plan']
         if not remaining:
@@ -194,8 +207,11 @@ def main():
         raise RuntimeError('Use an empty controlled scene; existing vehicles will not be removed')
     if world.get_settings().synchronous_mode and not args.take_tick_ownership:
         raise RuntimeError('World already synchronous; stop the other tick client first')
+    placement = (probe_placement(carla, world, saved, completed, catalog,
+                                 take_tick=args.take_tick_ownership)
+                 if args.retry_test_placement else None)
     capture_plan(plan, args.resume or args.output, take_tick=args.take_tick_ownership,
-                 resume=bool(args.resume), pilot=args.pilot)
+                 resume=bool(args.resume), pilot=args.pilot, test_placement=placement)
 
 
 if __name__ == '__main__':

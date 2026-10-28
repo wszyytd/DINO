@@ -207,6 +207,33 @@ class ResumePhotoTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'previously completed'):
                 prepare_resume(root, pilot=True)
 
+    def test_test_relocation_preserves_completed_train_val_and_persists_both_test_configs(self):
+        with tempfile.TemporaryDirectory() as tmp, patch('builtins.print'):
+            root = Path(tmp) / 'capture'
+            self.interrupted(root)
+            val_cases = [c for c in self.plan['cases'] if c['split'] == 'val'][:2]
+            for case in val_cases:
+                self.scene(root, case)
+            before = {p: p.read_bytes() for s in ('train', 'val')
+                      for p in (root / s).rglob('*.png')}
+            anchor = self.plan['split_anchors']['test'][1]
+            def capture(command, check):
+                name = Path(command[command.index('--output') + 1]).name
+                cfg = json.loads(Path(command[command.index('--config') + 1]).read_text(encoding='utf-8'))
+                case = dict(next(c for c in self.plan['cases'] if c['name'] == name), config=cfg)
+                self.scene(root, case)
+            capture_plan(None, root, runner=capture, resume=True, pilot=True,
+                         test_placement=dict(anchor_spawn_index=anchor, separation=12, attempts=[]))
+            saved, completed, remaining = prepare_resume(root, pilot=True)
+            self.assertEqual(saved['status'], 'complete')
+            self.assertEqual(len(completed), 6)
+            self.assertEqual(remaining, [])
+            self.assertEqual(len(saved['placement_revisions']), 1)
+            self.assertTrue(all(c['config']['anchor_spawn_index'] == anchor
+                                and c['config']['separation'] == 12
+                                for c in saved['plan']['cases'] if c['split'] == 'test'))
+            self.assertEqual(before, {p: p.read_bytes() for p in before})
+
 
 if __name__ == '__main__':
     unittest.main()

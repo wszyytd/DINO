@@ -70,6 +70,14 @@ tail -f out/more_photos_pilot_20261028.log
 
 查看日志时按Ctrl+C只会退出 `tail`。若再次失败，先检查日志和CARLA状态，再运行相同续采命令，会重新校验并跳过已经完成的场景。无需缩小计划时去掉 `--pilot`；已经缩小的计划不会自动恢复到60场景。
 
+若训练和验证已完成，但测试组在 `cannot spawn` 处失败，且测试的A/B两组都尚未成功，可加 `--retry-test-placement`。程序先在原先保留给测试集的备用位置实际试放两辆车，依次尝试原间距、12米、16米；试放车辆清理并推进一帧后才进行下一次试放或正式拍摄。任何清理失败或CARLA接口异常都会停止，不把它当成位置不合适而继续重试。
+
+成功的摆放同时应用于测试A/B两组，写入 `placement_revisions`；训练、验证照片保留不动，生成失败的旧尝试仍归档。若任意一组测试参考已成功，程序拒绝更换摆放，防止两组测试几何不一致。预检仅检查生成和清理，不证明后续所有视图无遮挡、车辆静止或裁剪有效，拍照时仍执行原有检查。
+
+```bash
+nohup python -u collect_match_photos.py --resume data/more_photos_20261028_030040_745590 --pilot --retry-test-placement >> out/more_photos_pilot_20261028.log 2>&1 < /dev/null &
+```
+
 ## 采完先看什么
 
 实际输出位置会在终端打印，例如`data/more_photos_日期时间`。检查：
