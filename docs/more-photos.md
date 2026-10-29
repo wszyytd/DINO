@@ -78,6 +78,16 @@ tail -f out/more_photos_pilot_20261028.log
 nohup python -u collect_match_photos.py --resume data/more_photos_20261028_030040_745590 --pilot --retry-test-placement >> out/more_photos_pilot_20261028.log 2>&1 < /dev/null &
 ```
 
+2026年10月29日检查同步原图：82号位置、12米间距能放下两车，参考与高空图正常；下降图已出现建筑内部结构，侧视原图均值约0.206、99.87%像素接近黑色。相机的水平偏移约23米，进入了路旁建筑范围。失败场景整体保留，不参与配对清单。
+
+这一小试验可保留已确认的82号位置和12米间距，用 `--test-camera-radius 10` 将尚未成功的测试查询相机水平偏移限制在道路中心10米内。通过增加俯视角实现，方位与拍摄距离保持原值，低角度参考图也保持原值。测试视点改名为 `_raised` 并保存实际仰俯角，计划标注 `test_view_scope`，旧视点和新视点保存于 `camera_revisions`。这轮主要评估低角度参考到高俯视候选的匹配，不代表原计划的低角度测试成绩。
+
+此选项与 `--retry-test-placement` 分开使用，避免再次更换已确认的车辆位置。只修改两组未完成的测试查询视点；只要任意一组测试已成功，就拒绝调整。像素质量、车辆静止及完整裁剪检查继续执行。10米约束依据本次82号位置的道路范围，不是其他地图的通用无遮挡保证。
+
+```bash
+nohup python -u collect_match_photos.py --resume data/more_photos_20261028_030040_745590 --pilot --test-camera-radius 10 >> out/more_photos_camera_retry_20261029.log 2>&1 < /dev/null &
+```
+
 ## 采完先看什么
 
 实际输出位置会在终端打印，例如`data/more_photos_日期时间`。检查：

@@ -1,6 +1,7 @@
 """Bounded test-only placement retries, before either reference is collected."""
 
 from copy import deepcopy
+import math
 
 from capture import as_transform, find_blueprint
 from .scene import candidate_poses
@@ -13,7 +14,7 @@ def _test_group(manifest, completed):
     if (len(cases) != 2 or len({c['capture_group'] for c in cases}) != 1
             or {c['config']['target_identity'] for c in cases} != {'A', 'B'}):
         raise ValueError('placement retry requires one unstarted A/B test reference group')
-    keys = ('candidates', 'separation', 'anchor_spawn_index', 'query_yaw_mode')
+    keys = ('candidates', 'separation', 'anchor_spawn_index', 'query_yaw_mode', 'views')
     if any(cases[0]['config'].get(k) != cases[1]['config'].get(k) for k in keys):
         raise ValueError('test reference pair has inconsistent physical configuration')
     return cases
@@ -50,6 +51,40 @@ def apply_placement(manifest, completed, placement):
         cases=[c['name'] for c in cases], previous=previous, selected=option,
         attempts=placement.get('attempts', []),
         reason='Two-vehicle spawn feasibility preflight; no matching scores used.'))
+    return result
+
+
+def apply_camera_radius(manifest, completed, radius):
+    """Raise pending test queries to cap XY offset, preserving slant range/azimuth.
+
+    This is an explicit high-angle test variant, not a visibility certificate.
+    The normal capture quality/crop checks still decide whether a frame is saved.
+    """
+    if not math.isfinite(radius) or radius <= 0:
+        raise ValueError('test camera radius must be finite and positive')
+    result = deepcopy(manifest)
+    cases = _test_group(result, completed)
+    previous = deepcopy(cases[0]['config']['views'])
+    adjusted = deepcopy(previous)
+    changed = False
+    for view in adjusted:
+        minimum = math.degrees(math.acos(min(1.0, radius / view['distance'])))
+        if minimum > view['elevation'] + 1e-9:
+            view['elevation'] = minimum
+            if not view['name'].endswith('_raised'):
+                view['name'] += '_raised'
+            changed = True
+    if not changed:
+        return result
+    for case in cases:
+        case['config']['views'] = deepcopy(adjusted)
+    result['plan']['test_camera_radius_m'] = radius
+    result['plan']['test_view_scope'] = ('Raised query elevations at original azimuths/ranges; '
+        'low-angle references unchanged. This does not evaluate the original low-angle test views.')
+    result.setdefault('camera_revisions', []).append(dict(
+        cases=[c['name'] for c in cases], horizontal_radius_m=radius,
+        previous_views=previous, selected_views=deepcopy(adjusted),
+        reason='Synchronized failed frames show building interior at low-angle camera positions.'))
     return result
 
 

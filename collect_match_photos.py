@@ -15,7 +15,8 @@ from dinoexp.local_pairs import build_manifest, check_split
 from dinoexp.more_photos import (AUTO_MIN_ANCHOR_DISTANCE, build_plan, choose_models,
                                 select_anchors)
 from dinoexp.more_resume import check_resume_environment, prepare_resume, resume_summary
-from dinoexp.more_placement import apply_placement, placement_options, probe_placement
+from dinoexp.more_placement import (apply_camera_radius, apply_placement, placement_options,
+                                  probe_placement)
 
 
 def save_json(path, value):
@@ -25,12 +26,14 @@ def save_json(path, value):
 
 
 def capture_plan(plan, output, runner=subprocess.run, take_tick=False, *, resume=False, pilot=False,
-                 test_placement=None):
+                 test_placement=None, test_camera_radius=None):
     root = Path(output).resolve()
     if resume:
         manifest, completed, _ = prepare_resume(root, pilot)
         if test_placement is not None:
             manifest = apply_placement(manifest, completed, test_placement)
+        if test_camera_radius is not None:
+            manifest = apply_camera_radius(manifest, completed, test_camera_radius)
         plan = manifest['plan']
         if manifest.get('error'):
             manifest.setdefault('previous_errors', []).append(manifest.pop('error'))
@@ -132,6 +135,8 @@ def main():
                    'add only the first missing A/B reference group per split')
     p.add_argument('--retry-test-placement', action='store_true', help='with --resume --pilot: '
                    'probe reserved test positions and spacing before capturing either reference')
+    p.add_argument('--test-camera-radius', type=float, help='with --resume --pilot: raise pending '
+                   'test query elevations to cap horizontal offset in metres; retain current placement')
     p.add_argument('--host', default='127.0.0.1')
     p.add_argument('--port', type=int, default=2000)
     p.add_argument('--seed', type=int, default=11)
@@ -146,14 +151,25 @@ def main():
         raise ValueError('--pilot requires --resume')
     if args.retry_test_placement and not (args.resume and args.pilot):
         raise ValueError('--retry-test-placement requires --resume --pilot')
+    if args.test_camera_radius is not None:
+        if not (args.resume and args.pilot):
+            raise ValueError('--test-camera-radius requires --resume --pilot')
+        if args.retry_test_placement:
+            raise ValueError('adjust cameras at the existing placement; omit --retry-test-placement')
     if args.resume:
         saved, completed, remaining = prepare_resume(args.resume, args.pilot)
+        if args.test_camera_radius is not None:
+            saved = apply_camera_radius(saved, completed, args.test_camera_radius)
         options = placement_options(saved, completed) if args.retry_test_placement else None
         if args.dry_run:
             summary = resume_summary(saved, completed, remaining)
             if options is not None:
                 summary['test_placement_options'] = options
                 summary['placement_warning'] = 'Live two-vehicle probe required; no position confirmed yet.'
+            if args.test_camera_radius is not None:
+                summary['test_view_scope'] = saved['plan'].get('test_view_scope')
+                summary['test_query_views'] = next(c['config']['views']
+                    for c in saved['plan']['cases'] if c['split'] == 'test')
             print(json.dumps(summary, indent=2))
             return
         plan = saved['plan']
@@ -211,7 +227,8 @@ def main():
                                  take_tick=args.take_tick_ownership)
                  if args.retry_test_placement else None)
     capture_plan(plan, args.resume or args.output, take_tick=args.take_tick_ownership,
-                 resume=bool(args.resume), pilot=args.pilot, test_placement=placement)
+                 resume=bool(args.resume), pilot=args.pilot, test_placement=placement,
+                 test_camera_radius=args.test_camera_radius)
 
 
 if __name__ == '__main__':

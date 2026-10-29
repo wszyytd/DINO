@@ -234,6 +234,35 @@ class ResumePhotoTests(unittest.TestCase):
                                 for c in saved['plan']['cases'] if c['split'] == 'test'))
             self.assertEqual(before, {p: p.read_bytes() for p in before})
 
+    def test_camera_adjustment_recaptures_pending_test_pair_with_consistent_persisted_views(self):
+        with tempfile.TemporaryDirectory() as tmp, patch('builtins.print'):
+            root = Path(tmp) / 'capture'
+            self.interrupted(root)
+            for case in [c for c in self.plan['cases'] if c['split'] == 'val'][:2]:
+                self.scene(root, case)
+            first_test = next(c for c in self.plan['cases'] if c['split'] == 'test')
+            partial = root / 'test' / first_test['name']
+            partial.mkdir()
+            (partial / 'run.json').write_text(json.dumps(dict(status='incomplete',
+                config=first_test['config'], error='near_black_image')))
+            before = {p: p.read_bytes() for s in ('train', 'val')
+                      for p in (root / s).rglob('*.png')}
+            def capture(command, check):
+                name = Path(command[command.index('--output') + 1]).name
+                cfg = json.loads(Path(command[command.index('--config') + 1]).read_text(encoding='utf-8'))
+                self.scene(root, dict(next(c for c in self.plan['cases'] if c['name'] == name), config=cfg))
+            capture_plan(None, root, runner=capture, resume=True, pilot=True, test_camera_radius=10)
+            saved, completed, remaining = prepare_resume(root, pilot=True)
+            self.assertEqual(saved['status'], 'complete')
+            self.assertEqual(len(completed), 6)
+            self.assertEqual(remaining, [])
+            views = [c['config']['views'] for c in saved['plan']['cases'] if c['split'] == 'test']
+            self.assertEqual(views[0], views[1])
+            self.assertTrue(all(v['name'].endswith('_raised') for v in views[0]))
+            self.assertEqual(len(saved['camera_revisions']), 1)
+            self.assertEqual(len(list((root / '_failed').iterdir())), 1)
+            self.assertEqual(before, {p: p.read_bytes() for p in before})
+
 
 if __name__ == '__main__':
     unittest.main()
