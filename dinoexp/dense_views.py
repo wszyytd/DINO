@@ -28,10 +28,12 @@ def _prepare(image, rect, size):
     mask = np.zeros((size, size), np.uint8); mask[top:top+rh, left:left+rw] = 1
     side = size//14
     fraction = mask.reshape(side, 14, side, 14).mean((1, 3)).reshape(-1)
-    yy, xx = np.meshgrid(np.arange(side)*14+7, np.arange(side)*14+7, indexing='ij')
-    # Partial edge patches map to their actual content, never outside the source.
-    sx = x + np.clip((xx.reshape(-1)-left)/rw, 0, 1)*w
-    sy = y + np.clip((yy.reshape(-1)-top)/rh, 0, 1)*h
+    yy, xx = np.meshgrid(np.arange(side)*14, np.arange(side)*14, indexing='ij')
+    # The visible intersection centroid differs from the padded patch center.
+    cx=(np.maximum(xx,left)+np.minimum(xx+14,left+rw))/2
+    cy=(np.maximum(yy,top)+np.minimum(yy+14,top+rh))/2
+    sx = x + np.clip((cx.reshape(-1)-left)/rw, 0, 1)*w
+    sy = y + np.clip((cy.reshape(-1)-top)/rh, 0, 1)*h
     return prepared, fraction, np.stack((sx/image.width, sy/image.height), -1), (rw/size, rh/size)
 
 

@@ -77,3 +77,16 @@ class DenseCaptureTests(unittest.TestCase):
         self.assertEqual(result[:2],[10,20])
         self.assertGreater(result[2],70)
         self.assertEqual(original,[10,20,.1,0,90,0])
+
+    def test_sensor_destroy_is_attempted_even_when_stop_raises(self):
+        world=SimpleNamespace(get_settings=lambda:'settings',get_weather=lambda:'weather',
+            apply_settings=lambda value:None,set_weather=lambda value:None)
+        calls=[]
+        def stop():raise RuntimeError('listener already failed')
+        actor=SimpleNamespace(id=9,type_id='sensor.camera.rgb',stop=stop,
+                              destroy=lambda:calls.append('destroy') or True)
+        vehicle=SimpleNamespace(id=8,type_id='vehicle.test',destroy=lambda:calls.append('vehicle') or True)
+        run={'cleanup_errors':[]}
+        with managed_capture(world,[vehicle,actor],run):pass
+        self.assertEqual(calls,['destroy','vehicle'])
+        self.assertTrue(run['cleanup_errors'])

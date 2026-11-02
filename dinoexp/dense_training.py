@@ -39,15 +39,37 @@ def _load(args):
     cache=DenseFeatureCache(args.cache)
     if cache.manifest_sha256!=data['_manifest_sha256']:
         raise ValueError('dense cache manifest hash differs from labels')
+    cache.preflight(data['samples'],data['_root'])
     return data,cache
 
 
-def load_head(path,cache,device):
+def inspect_checkpoint(path,expected_feature,expected_model=None,held_out=(),partial=False):
     checkpoint=torch.load(path,map_location='cpu',weights_only=True)
-    if checkpoint.get('kind')!='dense_reference_search_v1' or checkpoint['feature_config']!=cache.config:
+    if checkpoint.get('kind')!='dense_reference_search_v1' or checkpoint.get('stage') not in ('simulation','real'):
         raise ValueError('need compatible dense checkpoint; crop matcher weights cannot be reused')
-    model=DenseSearchHead(**checkpoint['model_config']).to(device)
-    model.load_state_dict(checkpoint['model_state'],strict=True)
+    actual=checkpoint.get('feature_config',{})
+    if ((partial and any(actual.get(k)!=v for k,v in expected_feature.items())) or
+            (not partial and actual!=expected_feature)):
+        raise ValueError('checkpoint feature contract differs from selected preset/cache')
+    if expected_model is not None and checkpoint.get('model_config')!=expected_model:
+        raise ValueError('checkpoint head differs from selected preset')
+    if not all(isinstance(checkpoint.get(k),list) for k in ('training_images','training_groups')):
+        raise ValueError('checkpoint lacks image/group provenance')
+    hashes={r[k] for r in held_out for k in ('reference_sha256','image_sha256')}
+    groups={r['group'] for r in held_out}
+    if hashes&set(checkpoint['training_images']) or groups&set(checkpoint['training_groups']):
+        raise ValueError('planned held-out images/groups overlap checkpoint pretraining')
+    try:
+        model=DenseSearchHead(**checkpoint['model_config'])
+        model.load_state_dict(checkpoint['model_state'],strict=True)
+    except (KeyError,TypeError,RuntimeError) as error:
+        raise ValueError('invalid dense checkpoint model state') from error
+    return model,checkpoint
+
+
+def load_head(path,cache,device,held_out=()):
+    model,checkpoint=inspect_checkpoint(path,cache.config,held_out=held_out)
+    model=model.to(device)
     return model,checkpoint
 
 
@@ -68,18 +90,32 @@ def _predict(model,rows,cache,root,device,gamma=2.,null_weight=1.):
 
 
 def _metrics(rows,outputs,root,grid):
-    present=top1=top5=exists=known=0
+    present=exists=known=0
+    hits={1:0,5:0};evaluable={1:0,5:0};unknown={1:0,5:0}
     for row,p in zip(rows,outputs,strict=True):
         label=make_targets(row,root,grid)
         if row['presence']!='absent':
             target=label['target'][:-1]>0
             order=np.argsort(-p[:-1])
-            present+=1;top1+=bool(target[order[0]]);top5+=bool(target[order[:5]].any())
+            present+=1
+            for k in (1,5):
+                chosen=order[:k]
+                hit=bool(target[chosen].any())
+                indeterminate=(not hit and label['mode']=='confirmed_regions'
+                               and not label['known'][chosen].all())
+                if indeterminate:
+                    unknown[k]+=1
+                else:
+                    evaluable[k]+=1;hits[k]+=hit
         if row['presence']!='unknown':
             known+=1;exists+=bool((p[-1]>=.5)==(row['presence']=='absent'))
-    return dict(samples=len(rows),present_samples=present,spatial_top1_hits=top1,
-        spatial_top1=(top1/present if present else None),spatial_top5=(top5/present if present else None),
+    return dict(samples=len(rows),present_samples=present,spatial_top1_hits=hits[1],
+        spatial_top1=(hits[1]/evaluable[1] if evaluable[1] else None),
+        spatial_top5=(hits[5]/evaluable[5] if evaluable[5] else None),
+        spatial_top1_evaluable=evaluable[1],spatial_top5_evaluable=evaluable[5],
+        spatial_top1_unknown=unknown[1],spatial_top5_unknown=unknown[5],
         existence_at_0_5=(exists/known if known else None),
+        metric_scope='Full-grid ranks; unreviewed real predictions are indeterminate and excluded from evaluable denominator.',
         warning='Spatial grid hits are not vehicle identity accuracy; Null threshold is uncalibrated.')
 
 
@@ -100,7 +136,8 @@ def train_dense(args):
     if args.stage=='real':
         if not args.checkpoint:
             raise ValueError('real adaptation requires a simulation dense checkpoint')
-        model,source=load_head(args.checkpoint,cache,device)
+        held_out=[r for r in data['samples'] if r['split'] in ('val','test')]
+        model,source=load_head(args.checkpoint,cache,device,held_out=held_out)
         if source['stage'] not in ('simulation','real'):
             raise ValueError('real adaptation needs simulation-trained dense weights')
         val_hashes={r[k] for r in validation for k in ('reference_sha256','image_sha256')}
@@ -164,7 +201,7 @@ def evaluate_dense(args):
     data,cache=_load(args)
     rows=[r for r in data['samples'] if r['split']==args.split]
     torch.set_num_threads(args.threads);device=resolve_device(args.device,torch)
-    model,checkpoint=load_head(args.checkpoint,cache,device)
+    model,checkpoint=load_head(args.checkpoint,cache,device,held_out=rows)
     hashes={r[k] for r in rows for k in ('reference_sha256','image_sha256')}
     if (hashes&set(checkpoint['training_images']) or
             {r['group'] for r in rows}&set(checkpoint['training_groups'])):
@@ -199,7 +236,8 @@ def evaluate_dense(args):
                         ids=np.array([r['id'] for r in rows]))
     (output/'index.html').write_text('<!doctype html><meta charset="utf-8"><title>参考图引导空间搜索</title>'
         '<style>body{font:17px sans-serif;max-width:1200px;margin:30px auto}img{max-width:100%}article{border-top:1px solid #ccc}</style>'
-        '<h1>参考图引导航拍搜索</h1><p>热图来自受空间监督的输出，按图归一化显示；不等于车辆部件或身份概率。</p>'
+        '<h1>参考图引导航拍搜索</h1><p>热图来自受空间监督的输出，按图归一化显示；不等于车辆部件或身份概率。'
+        '真实部分标注中，预测落入未知区域时记为无法判定，单列数量，不当作确认错误。</p>'
         +''.join(cards),encoding='utf-8')
     result['status']='complete';save_json(output/'summary.json',result)
     print(json.dumps(result,indent=2),flush=True)

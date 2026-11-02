@@ -8,7 +8,7 @@ import numpy as np
 from PIL import Image
 import torch
 from dinoexp.dense_cache import DenseFeatureCache
-from dinoexp.dense_training import train_dense, evaluate_dense
+from dinoexp.dense_training import train_dense, evaluate_dense, _metrics
 from dinoexp.local_pairs import sha256
 from run_dense_search import make_plan
 
@@ -44,6 +44,20 @@ def fixture(root):
     manifest=root/'manifest.json';manifest.write_text(json.dumps(dict(format_version=1,task='reference_guided_dense_search',samples=samples)))
     (cache/'cache.json').write_text(json.dumps(dict(status='complete',format_version=1,
         kind='dense_reference_features',config=config,manifest_sha256=sha256(manifest),images=images)))
+    return manifest,cache
+
+
+def reviewed_fixture(root):
+    manifest,cache=fixture(root)
+    value=json.loads(manifest.read_text())
+    for row in value['samples']:
+        mask=np.zeros((28,28),np.uint8);mask[14:,14:]=255
+        path=row['split']+'_negative.png';Image.fromarray(mask).save(root/path)
+        row.update(supervision='confirmed_regions',reviewed=True,mask_source='reviewed_manual',negative_masks=[path])
+        row['mask_sha256'][path]=sha256(root/path)
+    manifest.write_text(json.dumps(value))
+    meta=json.loads((cache/'cache.json').read_text());meta['manifest_sha256']=sha256(manifest)
+    (cache/'cache.json').write_text(json.dumps(meta))
     return manifest,cache
 
 
@@ -87,4 +101,75 @@ class DensePipelineTests(unittest.TestCase):
                 model_repo=None,backbone=None,epochs=None,device='cpu',batch_size=1,dtype='float32')
             with self.assertRaisesRegex(ValueError,'supervision'):
                 make_plan(args)
+            self.assertFalse(args.output.exists())
+
+    def test_corruption_in_any_split_is_rejected_before_creating_training_output(self):
+        for split in ('train','val','test'):
+            with self.subTest(split=split),tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);manifest,cache=fixture(root)
+                row=next(r for r in json.loads(manifest.read_text())['samples'] if r['split']==split)
+                bank=DenseFeatureCache(cache);key='image:'+row['image_sha256']
+                (cache/bank.images[key]['file']).write_bytes(b'corrupted')
+                args=SimpleNamespace(manifest=manifest,data_root=root,cache=cache,output=root/'untouched',
+                    stage='simulation',checkpoint=None,device='cpu',epochs=1,lr=.002,batch_size=1,
+                    dim=16,heads=2,threads=2,seed=7,gamma=2.,null_weight=1.)
+                with self.assertRaisesRegex(ValueError,'hash'):train_dense(args)
+                self.assertFalse(args.output.exists())
+
+    def test_incompatible_real_checkpoint_is_rejected_before_backbone_resolution(self):
+        from dinoexp.dense_model import DenseSearchHead
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);manifest,cache=reviewed_fixture(root)
+            model=DenseSearchHead(input_dim=8,dim=16,heads=2,grid_size=2)
+            checkpoint=root/'initial.pt'
+            torch.save(dict(kind='dense_reference_search_v1',stage='simulation',
+                feature_config=DenseFeatureCache(cache).config,model_config=model.config,
+                model_state=model.state_dict(),training_images=[],training_groups=[]),checkpoint)
+            args=SimpleNamespace(manifest=manifest,data_root=root,output=root/'untouched',
+                preset='teacher',cache=None,stage='real',checkpoint=checkpoint,model_repo=None,
+                backbone=None,epochs=None,device='cpu',batch_size=1,dtype='float32')
+            with self.assertRaisesRegex(ValueError,'feature contract|preset'):make_plan(args)
+            self.assertFalse(args.output.exists())
+
+    def test_unknown_real_top1_is_indeterminate_instead_of_confirmed_miss(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);manifest,_=reviewed_fixture(root)
+            row=json.loads(manifest.read_text())['samples'][0]
+            unknown=_metrics([row],[np.array([.1,.6,.15,.1,.05])],root,2)
+            negative=_metrics([row],[np.array([.1,.15,.1,.6,.05])],root,2)
+            self.assertIsNone(unknown['spatial_top1'])
+            self.assertEqual(unknown['spatial_top1_unknown'],1)
+            self.assertEqual(negative['spatial_top1'],0.)
+            self.assertEqual(negative['spatial_top1_unknown'],0)
+
+    def test_checkpoint_preflight_rejects_bad_state_and_pretraining_leakage(self):
+        from dinoexp.dense_model import DenseSearchHead
+        from dinoexp.dense_training import inspect_checkpoint
+        for problem in ('state','image','group'):
+            with self.subTest(problem=problem),tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);manifest,cache=fixture(root)
+                rows=json.loads(manifest.read_text())['samples']
+                model=DenseSearchHead(input_dim=8,dim=16,heads=2,grid_size=2)
+                held_out=[r for r in rows if r['split']=='test']
+                payload=dict(kind='dense_reference_search_v1',stage='simulation',
+                    feature_config=DenseFeatureCache(cache).config,model_config=model.config,
+                    model_state={} if problem=='state' else model.state_dict(),
+                    training_images=[held_out[0]['image_sha256']] if problem=='image' else [],
+                    training_groups=['test'] if problem=='group' else [])
+                path=root/'initial.pt';torch.save(payload,path)
+                with self.assertRaises(ValueError):
+                    inspect_checkpoint(path,payload['feature_config'],held_out=held_out)
+
+    def test_uncovered_positive_grid_is_rejected_before_training_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);manifest,cache=fixture(root)
+            row=json.loads(manifest.read_text())['samples'][0]
+            bank=DenseFeatureCache(cache);entry=bank.images['image:'+row['image_sha256']]
+            path=cache/entry['file']
+            with np.load(path) as data:arrays={k:data[k].copy() for k in data.files}
+            arrays['indices'].fill(3);np.savez_compressed(path,**arrays)
+            meta=json.loads((cache/'cache.json').read_text());meta['images']['image:'+row['image_sha256']]['sha256']=sha256(path)
+            (cache/'cache.json').write_text(json.dumps(meta))
+            args=SimpleNamespace(manifest=manifest,data_root=root,cache=cache,output=root/'untouched')
+            with self.assertRaisesRegex(ValueError,'coverage'):train_dense(args)
             self.assertFalse(args.output.exists())

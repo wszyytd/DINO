@@ -7,6 +7,7 @@ import numpy as np
 from PIL import Image
 from .core import checked_path
 from .dense_data import read_dense_manifest
+from .dense_data import make_targets
 from .dense_views import make_views, prepare_reference
 from .local_features import resolve_device
 from .local_pairs import sha256
@@ -17,6 +18,15 @@ def save_json(path,value):
     temporary=path.with_suffix(path.suffix+'.tmp')
     temporary.write_text(json.dumps(value,indent=2,ensure_ascii=False),encoding='utf-8')
     temporary.replace(path)
+
+
+def feature_config(model,image_size,grid_size,tile_size,dtype,backbone_sha256):
+    if model not in ('dinov2_vitb14','dinov2_vits14') or dtype not in ('float16','float32'):
+        raise ValueError('unsupported dense backbone/dtype')
+    return dict(model=model,image_size=image_size,layers=[3,6,9,12],
+        input_dim=(768 if model=='dinov2_vitb14' else 384),grid_size=grid_size,
+        tile_size=tile_size,rows=3,cols=5,backbone_sha256=backbone_sha256,dtype=dtype,
+        preprocessing='native_letterbox_imagenet_v1',geometry_version=2)
 
 
 class DenseFeatureCache:
@@ -55,13 +65,30 @@ class DenseFeatureCache:
                 if value[field].shape!=want or not np.isfinite(value[field]).all():
                     raise ValueError('invalid dense geometry '+field)
             if (value['indices'].min()<0 or value['indices'].max()>=self.config['grid_size']**2
+                    or not np.issubdtype(value['indices'].dtype,np.integer)
                     or (value['weights']<0).any() or (value['priors']<=0).any()
                     or (value['view_weights']<=0).any()):
                 raise ValueError('dense mapping outside source grid')
+            if (value['weights'][~value['valid'].astype(bool)]>0).any():
+                raise ValueError('padding cannot contribute to dense fusion')
         self.memory[key]=value
         while len(self.memory)>2:
             self.memory.popitem(last=False)
         return value
+
+    def preflight(self,samples,root):
+        """Stream all required arrays and target coverage before allocating a task model."""
+        try:
+            for row in samples:
+                self.get('reference:'+row['reference_sha256'])
+                image=self.get('image:'+row['image_sha256'])
+                label=make_targets(row,root,self.config['grid_size'])
+                coverage=np.bincount(image['indices'].reshape(-1),
+                    weights=image['weights'].reshape(-1),minlength=self.config['grid_size']**2)
+                if ((coverage<=0)&(label['target'][:-1]>0)).any():
+                    raise ValueError('positive target outside native-grid coverage; reduce grid size')
+        finally:
+            self.memory.clear()
 
 
 def extract_dense_features(manifest_path,output,*,data_root=None,model_repo=None,checkpoint=None,
@@ -74,9 +101,7 @@ def extract_dense_features(manifest_path,output,*,data_root=None,model_repo=None
     # Geometry/path/weight failures occur before output creation or backbone allocation.
     make_views(Image.new('RGB',(2,2)),image_size,tile_size,grid_size=grid_size)
     repo,weight=resolve_backbone_paths(model_repo,checkpoint,model,Path(__file__).resolve().parents[1])
-    cfg=dict(model=model,image_size=image_size,layers=[3,6,9,12],input_dim=(768 if model=='dinov2_vitb14' else 384),
-             grid_size=grid_size,tile_size=tile_size,rows=3,cols=5,backbone_sha256=sha256(weight),dtype=dtype,
-             preprocessing='native_letterbox_imagenet_v1',geometry_version=1)
+    cfg=feature_config(model,image_size,grid_size,tile_size,dtype,sha256(weight))
     output=Path(output)
     marker=output/'cache.json'
     if output.exists():

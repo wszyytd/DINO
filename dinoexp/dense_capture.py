@@ -83,9 +83,12 @@ def managed_capture(world,owned,run):
         yield
     finally:
         for actor in reversed(owned):
-            try:
-                if actor.type_id.startswith('sensor.'):
+            if actor.type_id.startswith('sensor.'):
+                try:
                     actor.stop()
+                except Exception as error:
+                    run['cleanup_errors'].append(f'actor {actor.id} stop: {error}')
+            try:
                 if not actor.destroy():
                     raise RuntimeError('destroy returned false')
             except Exception as error:

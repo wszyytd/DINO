@@ -36,3 +36,8 @@ class DenseViewTests(unittest.TestCase):
     def test_partial_padding_uses_visible_area_as_geometry_weight(self):
         result=make_views(Image.new('RGB',(28,14)),image_size=28,rows=1,cols=1,grid_size=2)
         np.testing.assert_allclose(result['weights'][0].sum(-1),[.5,.5,.5,.5])
+
+    def test_partial_patch_maps_visible_content_centroid_without_native_grid_holes(self):
+        result=make_views(Image.new('RGB',(28,14)),image_size=28,rows=1,cols=1,grid_size=4)
+        covered=np.bincount(result['indices'][0].reshape(-1),weights=result['weights'][0].reshape(-1),minlength=16)
+        self.assertTrue((covered>0).all(),covered.reshape(4,4))

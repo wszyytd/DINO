@@ -5,8 +5,10 @@ from pathlib import Path
 import subprocess
 import sys
 from dinoexp.dense_data import read_dense_manifest
-from dinoexp.dense_cache import DenseFeatureCache
+from dinoexp.dense_cache import DenseFeatureCache,feature_config
+from dinoexp.dense_training import inspect_checkpoint
 from dinoexp.local_paths import resolve_backbone_paths
+from dinoexp.local_pairs import sha256
 
 
 def make_plan(args):
@@ -16,14 +18,7 @@ def make_plan(args):
     mode='simulation' if args.stage=='simulation' else 'confirmed_regions'
     if any(r['supervision']!=mode for r in data['samples'] if r['split'] in ('train','val')):
         raise ValueError('manifest supervision differs from selected training stage')
-    if args.stage=='real':
-        if not args.checkpoint or not args.checkpoint.is_file():
-            raise ValueError('real adaptation requires an existing simulation dense checkpoint')
-        import torch
-        source=torch.load(args.checkpoint,map_location='cpu',weights_only=True)
-        if source.get('kind')!='dense_reference_search_v1' or source.get('stage') not in ('simulation','real'):
-            raise ValueError('real adaptation needs a simulation-trained dense checkpoint, not crop weights')
-    elif args.checkpoint:
+    if args.stage!='real' and args.checkpoint:
         raise ValueError('simulation starts from random task modules; checkpoint is for real adaptation')
     if args.output.exists():
         raise ValueError('output exists; preserve it and choose a new run directory')
@@ -35,12 +30,34 @@ def make_plan(args):
     base=['--manifest',args.manifest,'--data-root',data['_root'],'--device',args.device]
     cache=args.cache or args.output/'features'
     commands=[]
+    bank=DenseFeatureCache(cache) if args.cache else None
+    grid=bank.config['grid_size'] if bank else 32
+    tile=bank.config['tile_size'] if bank else 512
+    dtype=bank.config['dtype'] if bank else args.dtype
+    profile=feature_config(model,size,grid,tile,dtype,None)
+    profile.pop('backbone_sha256')
     if args.cache:
-        bank=DenseFeatureCache(cache)
-        if bank.manifest_sha256!=data['_manifest_sha256'] or bank.config['model']!=model or bank.config['image_size']!=size:
+        if (bank.manifest_sha256!=data['_manifest_sha256'] or
+                any(bank.config.get(k)!=v for k,v in profile.items())):
             raise ValueError('reused cache differs from dense manifest or selected preset')
+        bank.preflight(data['samples'],data['_root'])
+    source=None
+    if args.stage=='real':
+        if not args.checkpoint or not args.checkpoint.is_file():
+            raise ValueError('real adaptation requires an existing simulation dense checkpoint')
+        expected_model=dict(input_dim=profile['input_dim'],dim=dim,layers=4,heads=heads,
+                            grid_size=grid,reference_grid=8)
+        initial_head,source=inspect_checkpoint(args.checkpoint,profile,expected_model,
+            [r for r in data['samples'] if r['split'] in ('val','test')],partial=True)
+        del initial_head
+    if args.cache:
+        if source is not None and source['feature_config']!=bank.config:
+            raise ValueError('checkpoint feature contract differs from reused dense cache')
     else:
         repo,weight=resolve_backbone_paths(args.model_repo,args.backbone,model,scripts)
+        expected=feature_config(model,size,grid,tile,dtype,sha256(weight))
+        if source is not None and source['feature_config']!=expected:
+            raise ValueError('checkpoint feature contract differs from selected backbone/geometry/dtype')
         commands.append(command('cache_dense_features.py',*base,'--output',cache,'--model',model,
             '--image-size',size,'--model-repo',repo,'--checkpoint',weight,'--dtype',args.dtype))
     epochs=args.epochs if args.epochs is not None else (5 if args.stage=='simulation' else 60)
