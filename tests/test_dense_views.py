@@ -32,3 +32,7 @@ class DenseViewTests(unittest.TestCase):
         self.assertTrue(np.isfinite(result['geometry']).all())
         with self.assertRaises(ValueError):
             make_views(Image.new('RGB', (30, 20)), image_size=29)
+
+    def test_partial_padding_uses_visible_area_as_geometry_weight(self):
+        result=make_views(Image.new('RGB',(28,14)),image_size=28,rows=1,cols=1,grid_size=2)
+        np.testing.assert_allclose(result['weights'][0].sum(-1),[.5,.5,.5,.5])

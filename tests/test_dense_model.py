@@ -59,3 +59,21 @@ class DenseModelTests(unittest.TestCase):
             self.assertTrue(all(not p.requires_grad for p in getattr(model,name).parameters()))
         self.assertTrue(model.patch_score.weight.requires_grad)
         self.assertFalse(model.missing_state.requires_grad)
+
+    def test_duplicate_tile_does_not_change_full_model_existence_or_spatial_distribution(self):
+        model=DenseSearchHead(input_dim=8,dim=16,heads=2,grid_size=2).eval()
+        batch=tiny_batch(1)
+        first=model(**batch)['probabilities']
+        duplicate={k:(v[:,[0,1,1]] if k in ('views','view_valid','geometry','indices','weights','priors','view_weights') else v)
+                   for k,v in batch.items()}
+        duplicate['view_weights']=torch.tensor([[1.,.5,.5]])
+        torch.testing.assert_close(first,model(**duplicate)['probabilities'])
+
+    def test_extreme_local_null_logits_still_produce_normalized_global_output(self):
+        model=DenseSearchHead(input_dim=8,dim=16,heads=2,grid_size=2).eval()
+        with torch.no_grad():
+            model.patch_score.weight.zero_();model.patch_score.bias.fill_(-10000)
+            model.local_null[-1].weight.zero_();model.local_null[-1].bias.fill_(10000)
+            model.global_existence[-1].weight.zero_();model.global_existence[-1].bias.zero_()
+        result=model(**tiny_batch())['probabilities']
+        torch.testing.assert_close(result.sum(1),torch.ones(2))

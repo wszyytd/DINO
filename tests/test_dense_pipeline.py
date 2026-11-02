@@ -10,6 +10,7 @@ import torch
 from dinoexp.dense_cache import DenseFeatureCache
 from dinoexp.dense_training import train_dense, evaluate_dense
 from dinoexp.local_pairs import sha256
+from run_dense_search import make_plan
 
 
 def fixture(root):
@@ -60,6 +61,8 @@ class DensePipelineTests(unittest.TestCase):
             self.assertEqual(run['status'],'complete')
             checkpoint=torch.load(root/'train/best.pt',weights_only=True)
             self.assertEqual(checkpoint['kind'],'dense_reference_search_v1')
+            third=torch.load(root/'train/epoch_003.pt',weights_only=True)
+            self.assertEqual(third['epoch'],3)
             result=evaluate_dense(SimpleNamespace(manifest=manifest,data_root=root,cache=cache,
                 checkpoint=root/'train/best.pt',output=root/'report',split='test',device='cpu',threads=2))
             self.assertEqual(result['samples'],1)
@@ -75,3 +78,13 @@ class DensePipelineTests(unittest.TestCase):
             path.write_bytes(b'changed')
             with self.assertRaisesRegex(ValueError,'hash'):
                 cache.get(key)
+
+    def test_real_stage_rejects_simulation_labels_before_any_backbone_work_or_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);manifest,cache=fixture(root)
+            args=SimpleNamespace(manifest=manifest,data_root=root,output=root/'untouched',
+                preset='teacher',cache=None,stage='real',checkpoint=root/'missing.pt',
+                model_repo=None,backbone=None,epochs=None,device='cpu',batch_size=1,dtype='float32')
+            with self.assertRaisesRegex(ValueError,'supervision'):
+                make_plan(args)
+            self.assertFalse(args.output.exists())

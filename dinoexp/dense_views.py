@@ -50,7 +50,7 @@ def make_views(image, image_size=518, tile_size=512, rows=3, cols=5, grid_size=3
         prepared, fraction, xy, resize = _prepare(image, rect, image_size)
         idx, weight = bilinear_map(xy, grid_size)
         keep = fraction > 0
-        weight *= keep[:, None]
+        weight *= fraction[:, None]
         x, y, w, h = rect
         images.append(prepared); valid.append(keep)
         geometry.append([x/width, y/height, w/width, h/height, *resize])

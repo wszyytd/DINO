@@ -103,10 +103,10 @@ def train_dense(args):
         model,source=load_head(args.checkpoint,cache,device)
         if source['stage'] not in ('simulation','real'):
             raise ValueError('real adaptation needs simulation-trained dense weights')
-        train_hashes={r[k] for r in train for k in ('reference_sha256','image_sha256')}
         val_hashes={r[k] for r in validation for k in ('reference_sha256','image_sha256')}
-        if set(source['training_images'])&val_hashes:
-            raise ValueError('validation images overlap checkpoint pretraining')
+        if (set(source['training_images'])&val_hashes or
+                set(source['training_groups'])&{r['group'] for r in validation}):
+            raise ValueError('validation images/groups overlap checkpoint pretraining')
         model.freeze_real_branches()
     else:
         if args.checkpoint:
@@ -119,6 +119,7 @@ def train_dense(args):
     run=dict(status='running',stage=args.stage,train_samples=len(train),validation_samples=len(validation),
         feature_config=cache.config,model_config=model.config,manifest_sha256=data['_manifest_sha256'],
         seed=args.seed,device=str(device),epochs=args.epochs,
+        arguments={k:str(v) if isinstance(v,Path) else v for k,v in vars(args).items()},
         warning='Teacher-inspired self-implementation; no teacher task weights. Performance unverified.')
     save_json(output/'training_run.json',run)
     history=[];best=float('inf')
@@ -150,6 +151,8 @@ def train_dense(args):
         snapshot=dict(provenance,epoch=epoch,model_state=model.state_dict())
         if val_loss<best:
             best=val_loss;torch.save(snapshot,output/'best.pt')
+        if args.stage=='simulation' and epoch==3:
+            torch.save(snapshot,output/'epoch_003.pt')
         torch.save(snapshot,output/'last.pt')
         print(f'Dense epoch {epoch}/{args.epochs}: train={record["train_loss"]:.6f}, val={val_loss:.6f}',flush=True)
     run.update(status='complete',best_sha256=sha256(output/'best.pt'),last_sha256=sha256(output/'last.pt'))

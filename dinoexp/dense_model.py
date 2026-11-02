@@ -98,8 +98,12 @@ class DenseSearchHead(nn.Module):
         null_logits=self.local_null(torch.cat((desc,summaries),-1)).squeeze(-1)
         patch_logits=self.patch_score(q).squeeze(-1).masked_fill(~valid,-torch.inf)
         per_view=torch.cat((patch_logits,null_logits[:,:,None]),-1).softmax(-1)
+        # Keep a conditional spatial distribution even when Null saturates in float32.
+        floor=torch.cat((valid,torch.ones(b,v,1,device=valid.device,dtype=torch.bool)),-1)
+        per_view=per_view.clamp_min(1e-12)*floor
+        per_view=per_view/per_view.sum(-1,keepdim=True)
         reliability=self.reliability(torch.cat((desc,summaries,geo),-1)).squeeze(-1).sigmoid()
-        effective=reliability*priors*view_weights
+        effective=(reliability+1e-6)*priors*view_weights
         spatial,coverage=fuse_spatial(per_view[:,:,:-1],indices,weights*valid[:,:,:,None],effective,self.grid_size)
         if not (coverage.sum(1)>0).all():
             raise ValueError('no native search-grid coverage')
@@ -111,4 +115,5 @@ class DenseSearchHead(nn.Module):
         probabilities=torch.cat((spatial*presence,1-presence),-1)
         return dict(probabilities=probabilities,spatial=probabilities[:,:-1].reshape(b,self.grid_size,self.grid_size),
                     null=probabilities[:,-1],local_null=local_null,coverage=coverage,
-                    reliability=reliability)
+                    reliability=reliability,conditioned_features=q,reference_tokens=r,
+                    reference_descriptor=description)

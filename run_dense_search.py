@@ -13,6 +13,18 @@ def make_plan(args):
     data=read_dense_manifest(args.manifest,args.data_root)
     if {r['split'] for r in data['samples']}!={'train','val','test'}:
         raise ValueError('one-shot dense run needs separate train/val/test; never split correlated views randomly')
+    mode='simulation' if args.stage=='simulation' else 'confirmed_regions'
+    if any(r['supervision']!=mode for r in data['samples'] if r['split'] in ('train','val')):
+        raise ValueError('manifest supervision differs from selected training stage')
+    if args.stage=='real':
+        if not args.checkpoint or not args.checkpoint.is_file():
+            raise ValueError('real adaptation requires an existing simulation dense checkpoint')
+        import torch
+        source=torch.load(args.checkpoint,map_location='cpu',weights_only=True)
+        if source.get('kind')!='dense_reference_search_v1' or source.get('stage') not in ('simulation','real'):
+            raise ValueError('real adaptation needs a simulation-trained dense checkpoint, not crop weights')
+    elif args.checkpoint:
+        raise ValueError('simulation starts from random task modules; checkpoint is for real adaptation')
     if args.output.exists():
         raise ValueError('output exists; preserve it and choose a new run directory')
     model,size,dim,heads=(('dinov2_vitb14',518,256,8) if args.preset=='teacher'

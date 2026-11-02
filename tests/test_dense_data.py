@@ -35,6 +35,10 @@ class DenseDataTests(unittest.TestCase):
 
     def test_real_instances_receive_equal_mass_regardless_of_size(self):
         self.sample.update(supervision='confirmed_regions', reviewed=True, mask_source='reviewed_manual')
+        negative=np.zeros((4,4),np.uint8);negative[1,1]=255
+        Image.fromarray(negative).save(self.root/'negative.png')
+        self.sample['negative_masks']=['negative.png']
+        self.sample['mask_sha256']['negative.png']=self.digest('negative.png')
         manifest = read_dense_manifest(self.write([self.sample]))
         labels = make_targets(manifest['samples'][0], self.root, 4)
         self.assertAlmostEqual(float(labels['target'][0]), .5)
@@ -65,3 +69,13 @@ class DenseDataTests(unittest.TestCase):
         manifest = read_dense_manifest(self.write([self.sample]))
         labels = make_targets(manifest['samples'][0], self.root, 2)
         np.testing.assert_array_equal(labels['target'], [0, 0, 0, 0, 1])
+
+    def test_boxes_are_not_an_accepted_visible_mask_source(self):
+        self.sample['mask_source']='projected_box'
+        with self.assertRaisesRegex(ValueError,'mask source'):
+            read_dense_manifest(self.write([self.sample]))
+
+    def test_real_positive_only_data_is_not_silently_used_as_validation(self):
+        self.sample.update(supervision='confirmed_regions',reviewed=True,mask_source='reviewed_manual')
+        with self.assertRaisesRegex(ValueError,'negative'):
+            read_dense_manifest(self.write([self.sample]))

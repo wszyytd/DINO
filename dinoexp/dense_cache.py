@@ -75,7 +75,8 @@ def extract_dense_features(manifest_path,output,*,data_root=None,model_repo=None
     make_views(Image.new('RGB',(2,2)),image_size,tile_size,grid_size=grid_size)
     repo,weight=resolve_backbone_paths(model_repo,checkpoint,model,Path(__file__).resolve().parents[1])
     cfg=dict(model=model,image_size=image_size,layers=[3,6,9,12],input_dim=(768 if model=='dinov2_vitb14' else 384),
-             grid_size=grid_size,tile_size=tile_size,rows=3,cols=5,backbone_sha256=sha256(weight),dtype=dtype)
+             grid_size=grid_size,tile_size=tile_size,rows=3,cols=5,backbone_sha256=sha256(weight),dtype=dtype,
+             preprocessing='native_letterbox_imagenet_v1',geometry_version=1)
     output=Path(output)
     marker=output/'cache.json'
     if output.exists():

@@ -57,6 +57,8 @@ def read_dense_manifest(path, data_root=None):
         identifiers.add(sample['id'])
         if sample['supervision'] not in ('simulation', 'confirmed_regions'):
             raise ValueError('unknown supervision mode')
+        if sample['mask_source'] not in ('carla_instance_verified','reviewed_manual','reviewed_sam2'):
+            raise ValueError('unsupported visible mask source; boxes are not segmentation labels')
         if sample['supervision'] == 'confirmed_regions' and sample.get('reviewed') is not True:
             raise ValueError('real positive/negative masks need explicit review')
         if not isinstance(sample.get('positive_masks'), list):
@@ -90,7 +92,11 @@ def read_dense_manifest(path, data_root=None):
             if sha256(checked_path(root, relative)) != sample.get('mask_sha256', {}).get(relative):
                 raise ValueError('mask hash mismatch')
         camera_embedding(sample.get('camera_pose'), sample.get('fov'))
-        positives, _, _ = mask_arrays(sample, root)
+        positives, negative, unknown = mask_arrays(sample, root)
+        if sample['supervision']=='confirmed_regions' and not negative.any():
+            raise ValueError('real localization needs confirmed negative regions; unknown is not negative')
+        if sample['supervision']=='simulation' and unknown.any():
+            raise ValueError('simulation full-grid supervision cannot include unknown pixels')
         if sample['supervision'] == 'simulation' and sample['presence'] == 'present' and not positives:
             raise ValueError('present simulation needs visible masks')
     return dict(data, _root=root, _manifest_sha256=sha256(path))
@@ -117,6 +123,8 @@ def make_targets(sample, root, grid_size):
     else:
         union = np.logical_or.reduce(positives) | negative
         known = area(union) > 0
+        if not (known & (target[:-1]==0)).any():
+            raise ValueError('no separate confirmed negative grid cells; increase grid resolution or review labels')
     if not np.isclose(target.sum(), 1):
         raise ValueError('no usable localization target after grid conversion')
     return dict(mode=sample['supervision'], target=target, known=known)
