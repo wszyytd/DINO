@@ -66,6 +66,15 @@ class EvidenceExperimentTests(unittest.TestCase):
         self.assertEqual(original, fingerprint(self.model))
         self.assertTrue(all(p.grad is None for p in self.model.parameters()))
 
+    def test_repeated_rollouts_do_not_inflate_episode_count(self):
+        runtime = FrozenRuntime(self.model, self.bank)
+        traces = [rollout(runtime, self.episode, 'random', budget=3, seed=seed)
+                  for seed in (7, 8, 9)]
+        report = summarize_rollouts(traces, budget=3)
+        self.assertEqual(report['episodes'], 1)
+        self.assertEqual(report['rollouts'], 3)
+        self.assertEqual(report['independent_groups'], 1)
+
     def test_staged_training_reload_rejects_wrong_feature_or_upstream_version(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

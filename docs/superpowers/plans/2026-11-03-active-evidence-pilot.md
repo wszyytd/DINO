@@ -62,7 +62,7 @@ Files: dinoexp/evidence_policy.py, run_evidence_pilot.py, docs/active-evidence-p
 - [x] Test fixed budgets, failure counting, oracle isolation, stopping statuses and deterministic random baselines.
 - [x] Add random/fixed/coverage/learned/oracle policies, CLS-mean comparator, artifact reports and manifest provenance.
 - [x] Run the real CPU pilot with alpha=0 and alpha=0.1, fixed seed/budget, no test-set selection or parameter tuning.
-- [ ] Run full tests and lint; review all changes; document empirical results and limits.
+- [x] Run full tests and lint; review all changes; document empirical results and limits.
 
 ## Execution ledger
 
@@ -74,3 +74,7 @@ Files: dinoexp/evidence_policy.py, run_evidence_pilot.py, docs/active-evidence-p
 - Real experiment: out/active_evidence_20261103_01, status complete. At budget 8, CLS-mean fixed order = 100%, learned policy alpha=0 and 0.1 = 50%. Value MSE exceeds the zero predictor in both branches. Eight evaluation episodes share one position: no claim of statistical/generalization success.
 - Ruling: default fixed-budget rankings are a pipeline diagnostic. Reliable threshold-crossing efficiency, identity-disjoint splits, cross-background queries and flight integration require later data/calibration; no stop threshold was selected on this evaluation set.
 - Reproduction: docs/active-evidence-pilot.md contains the command and limitations; run.json stores source hashes, parameters, feature config, roles and outcome. Original main checkout is preserved.
+- Final review: fresh read-only reviewer inspected f0adab5..c6d3da4, reused modules and experiment artifacts; independently reran the evidence tests. No Critical/Important issues. One reporting issue: repeated random rollouts inflated the `episodes` metadata. Reproduced with a failing regression, then split unique `episodes` and `rollouts`; regression passed. Corrected existing summaries from saved traces, preserving all curves/checkpoints and recording the reporting correction in run.json.
+- Final verification after the fix: 173 unittest tests passed (29.646 s), including 17 evidence tests; Ruff and git diff --check passed. Original experimental source hashes matched the committed source before the reporting-only fix. Training and raw rollout artifacts were not regenerated.
+- Final ruling on declined judgments: scientific superiority/manifold support is an empirical outcome, not an implementation acceptance criterion; this run is negative. Identity-disjoint and cross-background generalization require new data and remain outside this pilot. Calibrated stopping requires independent calibration and remains disabled. GPU behavior is unverified and not claimed. Physical flight/routes/simultaneous observations are outside equal-cost offline replay. Confidence across independent locations is not reported because evaluation has only one location.
+- Integration: keep codex/active-evidence-pilot in D:/Work/DINO-active-evidence for continued experiments; no merge or push requested. No temporary per-plan review workspace was created.

@@ -93,7 +93,8 @@ def summarize_rollouts(traces, budget):
                                      for t in traces])))
     confirmed_correct = sum(t['confirmed_correct'] for t in traces)
     confirmed = sum(t['status'] == 'CONFIRMED' for t in traces)
-    return {'episodes': len(traces), 'independent_groups': len({t['group'] for t in traces}),
+    return {'episodes': len({t['episode_id'] for t in traces}), 'rollouts': len(traces),
+            'independent_groups': len({t['group'] for t in traces}),
             'rank_accuracy_by_budget': curves,
             'correct_confirmation_rate': confirmed_correct/len(traces),
             'false_confirmation_rate': (confirmed-confirmed_correct)/len(traces),
