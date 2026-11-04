@@ -49,7 +49,7 @@ Files: `run_evidence_observation_diagnostics.py`, `dinoexp/evidence_observation_
 - [x] Test CLI rejects reused output before data loading and supports explicit development opt-in.
 - [x] Verify source run/cache/model fingerprints, disjoint roles, paired records; save source hashes and failed status on exception.
 - [x] Run the prescribed first-seed experiment; inspect metrics and plots. Run full tests and Ruff/diff checks, self-review, document limitations.
-- [ ] Commit/push the authorized experiment branch.
+- [x] Commit/push the authorized experiment branch (implementation `5096a5e`, push confirmed).
 
 ## Progress
 
