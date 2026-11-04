@@ -6,10 +6,17 @@ from .core import camera_pose
 
 
 def capture_view_pose(center, anchor_yaw, target_yaw, view, *, is_reference,
-                      query_yaw_mode='target'):
+                      query_yaw_mode='target', camera_z=None):
     if query_yaw_mode not in ('anchor', 'target'):
         raise ValueError('query_yaw_mode must be anchor or target')
     yaw = target_yaw if is_reference or query_yaw_mode == 'target' else anchor_yaw
+    if camera_z is not None:
+        horizontal = view['distance'] * math.cos(math.radians(view['elevation']))
+        rise = camera_z - center[2]
+        if not math.isfinite(camera_z) or rise <= 0 or horizontal <= 0:
+            raise ValueError('fixed camera height must be finite and above the look-at center')
+        return camera_pose(center, yaw, view['azimuth'], math.degrees(math.atan2(rise, horizontal)),
+                           math.hypot(horizontal, rise))
     return camera_pose(center, yaw, view['azimuth'], view['elevation'], view['distance'])
 
 
@@ -47,6 +54,9 @@ def candidate_poses(anchor, separation, yaw_offsets=None):
 
 
 def validate_scene(config):
+    if 'fixed_camera_height_m' in config and (not math.isfinite(config['fixed_camera_height_m'])
+                                             or config['fixed_camera_height_m'] <= 0):
+        raise ValueError('fixed_camera_height_m must be positive and finite')
     if config.get('query_yaw_mode', 'target') not in ('anchor', 'target'):
         raise ValueError('query_yaw_mode must be anchor or target')
     candidates = config["candidates"]

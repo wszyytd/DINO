@@ -202,7 +202,9 @@ def capture_scene(carla, world, versions, cfg, root, take_tick):
                 center = np.mean(target[3], axis=0) if ref else group_center
                 desired = capture_view_pose(center, points[index].rotation.yaw,
                     target[2].rotation.yaw, view, is_reference=ref,
-                    query_yaw_mode=cfg.get('query_yaw_mode', 'target'))
+                    query_yaw_mode=cfg.get('query_yaw_mode', 'target'),
+                    camera_z=points[index].location.z + cfg['fixed_camera_height_m']
+                    if 'fixed_camera_height_m' in cfg else None)
                 sensor.set_transform(as_transform(carla, desired))
                 image = next_image(world, frames, desired, cfg)
                 if any(
@@ -239,8 +241,9 @@ def capture_scene(carla, world, versions, cfg, root, take_tick):
                         camera_pose=json.dumps(pose_values(image.transform)),
                         target_pose=json.dumps(pose_values(tf)),
                         azimuth=view["azimuth"],
-                        elevation=view["elevation"],
-                        distance=view["distance"],
+                        elevation=-image.transform.rotation.pitch if 'fixed_camera_height_m' in cfg else view["elevation"],
+                        distance=math.dist(pose_values(image.transform)[:3], center)
+                        if 'fixed_camera_height_m' in cfg else view["distance"],
                         rgb_mean=quality["rgb_mean"],
                         near_black_fraction=quality["near_black_fraction"],
                     )
