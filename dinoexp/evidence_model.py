@@ -98,7 +98,7 @@ class ActionValue(nn.Module):
                                      nn.GELU(), nn.Linear(dim, 1))
         nn.init.zeros_(self.output[-1].bias)
 
-    def forward(self, q, memories, scores, counts, subjects, poses, candidate_mask=None):
+    def action_features(self, q, memories, scores, counts, subjects, poses, candidate_mask=None):
         """Only present state and action geometry; no true target/future feature argument."""
         means = memories.mean(2)
         batch, candidates, dim = means.shape
@@ -116,7 +116,10 @@ class ActionValue(nn.Module):
         reference = q.mean(1)[:, None].expand(-1, subjects.shape[1], -1)
         queries = self.action(torch.cat((reference, selected, poses, own_score, own_count), -1))
         read, _ = self.read(queries, context, candidate_mask)
-        combined = torch.cat((queries, read, queries*read, (queries-read).abs()), -1)
+        return torch.cat((queries, read, queries*read, (queries-read).abs()), -1)
+
+    def forward(self, q, memories, scores, counts, subjects, poses, candidate_mask=None):
+        combined = self.action_features(q, memories, scores, counts, subjects, poses, candidate_mask)
         return 4 * torch.tanh(self.output(combined).squeeze(-1))
 
 

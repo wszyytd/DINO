@@ -148,6 +148,8 @@ def train_value(runtime, records, output, steps=400, seed=7, lr=.001):
 
 def load_value(path, upstream_fingerprint, device='cpu'):
     checkpoint = torch.load(path, map_location='cpu', weights_only=True)
+    if checkpoint.get('diagnostic_only'):
+        raise ValueError('diagnostic checkpoint cannot be loaded as a deployed value policy')
     meta = checkpoint['metadata']
     if meta['upstream_fingerprint'] != upstream_fingerprint:
         raise ValueError('value checkpoint belongs to another upstream model')
