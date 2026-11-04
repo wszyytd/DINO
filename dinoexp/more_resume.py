@@ -12,9 +12,58 @@ from .dataset import load_dataset
 SPLITS = ('train', 'val', 'test')
 
 
-def prepare_resume(root, pilot=False):
+def expand_manifest(manifest):
+    """Restore omitted original cases without reverting current geometry or camera fixes."""
+    if 'original_plan' not in manifest:
+        raise ValueError('--expand-plan requires a saved original_plan')
+    manifest = deepcopy(manifest)
+    current, original = manifest['plan'], manifest['original_plan']
+    if original.get('map') != current.get('map'):
+        raise ValueError('original_plan map differs from current plan')
+    current_cases = {c['name']: c for c in current['cases']}
+    original_cases = {c['name']: c for c in original['cases']}
+    if (len(current_cases) != len(current['cases']) or len(original_cases) != len(original['cases'])
+            or set(current_cases)-set(original_cases)):
+        raise ValueError('invalid original_plan/current case identifiers')
+    added = [c['name'] for c in original['cases'] if c['name'] not in current_cases]
+    for name, case in current_cases.items():
+        old = original_cases[name]
+        if (case['split'], case['capture_group']) != (old['split'], old['capture_group']):
+            raise ValueError('current case split/group differs from original_plan')
+    current['cases'] = [current_cases.get(c['name'], c) for c in original['cases']]
+    groups = {}
+    for c in current['cases']:
+        groups.setdefault((c['split'], c['capture_group']), []).append(c)
+    for members in groups.values():
+        if len(members) != 2 or {c['config']['target_identity'] for c in members} != {'A', 'B'}:
+            raise ValueError('expanded plan requires complete A/B reference groups')
+        # References differ intentionally; query geometry must agree between A/B tasks.
+        a, b = (c['config'] for c in members)
+        for key in ('anchor_spawn_index', 'views', 'candidates', 'separation', 'weather'):
+            if a.get(key) != b.get(key):
+                raise ValueError('expanded A/B group has inconsistent query geometry')
+    current['split_anchors'] = {s: sorted({c['config']['anchor_spawn_index']
+        for c in current['cases'] if c['split']==s}) for s in SPLITS}
+    current['split_models'] = {s: sorted({v['blueprint'] for c in current['cases']
+        if c['split']==s for v in c['config']['candidates']}) for s in SPLITS}
+    current['expected_query_crops'] = sum(len(c['config']['views'])*len(c['config']['candidates'])
+                                        for c in current['cases'])
+    current['expected_reference_crops'] = len(current['cases'])
+    current['note'] = 'Expanded original plan; current geometry/camera revisions retained. Same-map crop data.'
+    if manifest.get('camera_revisions') and added:
+        current['test_view_scope'] = 'mixed_original_views_and_retained_camera_revisions'
+    manifest['scope'] = 'expanded_original_plan'
+    manifest['expansion_preview'] = dict(added_cases=added, retained_cases=sorted(current_cases))
+    return manifest
+
+
+def prepare_resume(root, pilot=False, expand_plan=False):
+    if pilot and expand_plan:
+        raise ValueError('--expand-plan cannot be combined with --pilot')
     root = Path(root).resolve()
     manifest = json.loads((root / 'collection.json').read_text(encoding='utf-8-sig'))
+    if expand_plan:
+        manifest = expand_manifest(manifest)
     plan = manifest['plan']
     cases = plan['cases']
     seen, completed = set(), set()
@@ -98,6 +147,7 @@ def prepare_resume(root, pilot=False):
 def resume_summary(manifest, completed, remaining):
     plan = manifest['plan']
     return dict(scope=manifest.get('scope', 'full_plan'),
+                expansion=manifest.get('expansion_preview'),
                 completed_scenes=len(completed), remaining_scenes=len(remaining),
                 planned_scenes=len(plan['cases']),
                 expected_query_crops=plan['expected_query_crops'],

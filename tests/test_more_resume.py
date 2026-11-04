@@ -134,6 +134,66 @@ class ResumePhotoTests(unittest.TestCase):
             self.assertEqual(summary['completed_scenes'], 2)
             self.assertEqual(summary['scope'], 'reduced_pilot')
 
+    def test_expand_original_plan_preserves_revisions_and_preview_is_read_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)/'capture'
+            self.interrupted(root)
+            saved, _, _ = prepare_resume(root, pilot=True)
+            test_cases = [c for c in saved['plan']['cases'] if c['split']=='test']
+            for c in test_cases:
+                c['config']['views'][0]['elevation'] = 85
+            saved['camera_revisions'] = [{'reason': 'fixture correction'}]
+            (root/'collection.json').write_text(json.dumps(saved))
+            before = {p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
+            expanded, completed, remaining = prepare_resume(root, expand_plan=True)
+            self.assertEqual(len(expanded['plan']['cases']), 60)
+            self.assertEqual(len(completed), 2)
+            self.assertEqual(len(remaining), 58)
+            for c in test_cases:
+                actual = next(x for x in expanded['plan']['cases'] if x['name']==c['name'])
+                self.assertEqual(actual, c)
+            self.assertEqual(expanded['camera_revisions'], saved['camera_revisions'])
+            self.assertEqual(before, {p:p.read_bytes() for p in before})
+            self.assertEqual(len(prepare_resume(root)[0]['plan']['cases']), 6)
+            output = io.StringIO()
+            with patch('sys.argv', ['collect_match_photos.py', '--resume', str(root),
+                                    '--expand-plan', '--dry-run']), redirect_stdout(output):
+                main()
+            self.assertEqual(json.loads(output.getvalue())['planned_scenes'], 60)
+            self.assertEqual(before, {p:p.read_bytes() for p in before})
+
+    def test_expansion_requires_original_plan_and_rejects_conflicting_split_positions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)/'capture'
+            self.interrupted(root)
+            with self.assertRaisesRegex(ValueError, 'original_plan'):
+                prepare_resume(root, expand_plan=True)
+            saved, _, _ = prepare_resume(root, pilot=True)
+            for c in saved['plan']['cases']:
+                if c['split']=='test':
+                    c['config']['anchor_spawn_index'] = saved['plan']['split_anchors']['train'][0]
+            (root/'collection.json').write_text(json.dumps(saved))
+            with self.assertRaisesRegex(ValueError, 'overlap'):
+                prepare_resume(root, expand_plan=True)
+            with self.assertRaisesRegex(ValueError, 'pilot'):
+                prepare_resume(root, pilot=True, expand_plan=True)
+
+    def test_expanded_capture_executes_only_missing_original_cases(self):
+        with tempfile.TemporaryDirectory() as tmp, patch('builtins.print'):
+            root = Path(tmp)/'capture'
+            self.interrupted(root)
+            capture_plan(None, root, runner=self.runner(root, []), resume=True, pilot=True)
+            images = {p:p.read_bytes() for p in root.rglob('*.png')}
+            calls = []
+            capture_plan(None, root, runner=self.runner(root, calls), resume=True, expand_plan=True)
+            saved, completed, remaining = prepare_resume(root)
+            self.assertEqual(saved['status'], 'complete')
+            self.assertEqual(len(completed), 60)
+            self.assertEqual(len(calls), 54)
+            self.assertEqual(remaining, [])
+            self.assertEqual(saved['scope'], 'expanded_original_plan')
+            self.assertEqual(images, {p:p.read_bytes() for p in images})
+
     def test_resume_rejects_changed_complete_scene_config_before_writing(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / 'capture'

@@ -51,6 +51,28 @@ class EvidenceExperimentTests(unittest.TestCase):
                                    memory_tokens=3, blocks=1)
         self.episode = small_episode()
 
+    def test_relative_scores_are_shift_invariant_and_preserve_discrimination(self):
+        from dinoexp.evidence_labels import matching_scores
+        logits = torch.tensor([[6.56, 5.67], [-2., 3.]])
+        scores = matching_scores(logits)
+        torch.testing.assert_close(scores, matching_scores(logits + 64), atol=1e-5, rtol=1e-5)
+        self.assertGreater(float(scores[0, 0]-scores[0, 1]), .8)
+        self.assertTrue(torch.equal(scores.argmax(1), logits.argmax(1)))
+        for temperature in (0., float('nan'), float('inf')):
+            with self.assertRaises(ValueError):
+                matching_scores(logits, temperature)
+        with self.assertRaises(ValueError):
+            matching_scores(torch.tensor([[float('nan'), 0.]]))
+
+    def test_score_versions_reject_old_value_labels(self):
+        new = FrozenRuntime(self.model, self.bank)
+        old = FrozenRuntime(self.model, self.bank, score_mode='legacy_tanh_v1')
+        self.assertNotEqual(new.fingerprint, old.fingerprint)
+        records = generate_labels(old, [self.episode], states_per_episode=1)
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, 'fingerprint'):
+                train_value(new, records, Path(tmp)/'value', steps=1)
+
     def test_labels_have_no_future_or_target_in_policy_inputs_and_failure_is_zero(self):
         runtime = FrozenRuntime(self.model, self.bank)
         records = generate_labels(runtime, [self.episode], states_per_episode=2, seed=4)
@@ -82,6 +104,11 @@ class EvidenceExperimentTests(unittest.TestCase):
                          steps=3, alpha=.1, seed=5)
             loaded, meta = load_memory(root / 'memory' / 'last.pt', self.bank.config)
             self.assertEqual(meta['status'], 'complete')
+            from dinoexp.evidence_experiment import load_representation
+            load_representation(root/'memory/last.pt', self.bank.config, [self.episode], .1)
+            for episodes, alpha in (([small_episode('wrong')], .1), ([self.episode], 0.)):
+                with self.assertRaisesRegex(ValueError, 'upstream'):
+                    load_representation(root/'memory/last.pt', self.bank.config, episodes, alpha)
             with self.assertRaisesRegex(ValueError, 'feature'):
                 load_memory(root / 'memory' / 'last.pt', dict(self.bank.config, pooled_grid=1))
             runtime = FrozenRuntime(loaded, self.bank)

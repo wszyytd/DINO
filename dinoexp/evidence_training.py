@@ -132,6 +132,7 @@ def train_value(runtime, records, output, steps=400, seed=7, lr=.001):
             print(f'Value step {step+1}/{steps}: scaled_mse={np.mean(losses[-100:]):.7f}',
                   flush=True)
     meta = dict(status='complete', stage='value', steps=steps, seed=seed, lr=lr,
+                score_mode=runtime.score_mode, score_temperature=runtime.temperature,
                 upstream_fingerprint=runtime.fingerprint, model_config=value.config,
                 seconds=time.monotonic()-start, states=len(records),
                 training_episodes=sorted({r['episode_id'] for r in records}),
@@ -161,6 +162,8 @@ def load_value(path, upstream_fingerprint, device='cpu'):
 def evaluate_value(value, records, device='cpu'):
     errors, zero_errors, regrets, hits = [], [], [], []
     nonconstant = 0
+    pair_correct, pair_count = 0, 0
+    random_hits, random_regrets, all_targets = [], [], []
     for record in records:
         prediction = value(**{k: v.to(device) for k, v in record['inputs'].items()})[0].cpu()
         target = record['targets'][0]
@@ -168,11 +171,25 @@ def evaluate_value(value, records, device='cpu'):
         zero_errors.extend(target.square().tolist())
         chosen = int(prediction.argmax())
         regrets.append(float(target.max()-target[chosen]))
+        random_regrets.append(float(target.max()-target.mean()))
+        all_targets.extend(target.tolist())
+        delta = target[:, None]-target[None, :]
+        predicted_delta = prediction[:, None]-prediction[None, :]
+        comparable = delta.abs() > 1e-6
+        pair_count += int(comparable.sum())
+        pair_correct += int(((delta*predicted_delta > 0) & comparable).sum())
         if float(target.max()-target.min()) > 1e-6:
             nonconstant += 1
             hits.append(float(target[chosen] >= target.max()-1e-6))
+            random_hits.append(float((target >= target.max()-1e-6).float().mean()))
     return {'states': len(records), 'nonconstant_states': nonconstant,
             'mse': float(np.mean(errors)) if errors else None,
             'zero_predictor_mse': float(np.mean(zero_errors)) if errors else None,
             'mean_action_regret': float(np.mean(regrets)) if regrets else None,
-            'best_action_rate_nonconstant': float(np.mean(hits)) if hits else None}
+            'best_action_rate_nonconstant': float(np.mean(hits)) if hits else None,
+            'random_best_action_rate_nonconstant': float(np.mean(random_hits)) if random_hits else None,
+            'random_mean_action_regret': float(np.mean(random_regrets)) if random_regrets else None,
+            'pairwise_ranking_accuracy': pair_correct/pair_count if pair_count else None,
+            'label_count': len(all_targets),
+            'near_zero_label_fraction': float(np.mean(np.abs(all_targets) <= 1e-6))
+            if all_targets else None}

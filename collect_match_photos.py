@@ -26,10 +26,10 @@ def save_json(path, value):
 
 
 def capture_plan(plan, output, runner=subprocess.run, take_tick=False, *, resume=False, pilot=False,
-                 test_placement=None, test_camera_radius=None):
+                 test_placement=None, test_camera_radius=None, expand_plan=False):
     root = Path(output).resolve()
     if resume:
-        manifest, completed, _ = prepare_resume(root, pilot)
+        manifest, completed, _ = prepare_resume(root, pilot, expand_plan=expand_plan)
         if test_placement is not None:
             manifest = apply_placement(manifest, completed, test_placement)
         if test_camera_radius is not None:
@@ -133,6 +133,8 @@ def main():
     destination.add_argument('--resume', type=Path, help='verify and continue a saved collection')
     p.add_argument('--pilot', action='store_true', help='with --resume: retain completed groups, '
                    'add only the first missing A/B reference group per split')
+    p.add_argument('--expand-plan', action='store_true',
+                   help='with --resume: restore omitted original cases, retain current revisions')
     p.add_argument('--retry-test-placement', action='store_true', help='with --resume --pilot: '
                    'probe reserved test positions and spacing before capturing either reference')
     p.add_argument('--test-camera-radius', type=float, help='with --resume --pilot: raise pending '
@@ -147,6 +149,8 @@ def main():
     p.add_argument('--dry-run', action='store_true', help='read CARLA inventory, print plan, no capture')
     p.add_argument('--take-tick-ownership', action='store_true')
     args = p.parse_args()
+    if args.expand_plan and (not args.resume or args.pilot):
+        raise ValueError('--expand-plan requires --resume and cannot combine with --pilot')
     if args.pilot and not args.resume:
         raise ValueError('--pilot requires --resume')
     if args.retry_test_placement and not (args.resume and args.pilot):
@@ -157,7 +161,7 @@ def main():
         if args.retry_test_placement:
             raise ValueError('adjust cameras at the existing placement; omit --retry-test-placement')
     if args.resume:
-        saved, completed, remaining = prepare_resume(args.resume, args.pilot)
+        saved, completed, remaining = prepare_resume(args.resume, args.pilot, args.expand_plan)
         if args.test_camera_radius is not None:
             saved = apply_camera_radius(saved, completed, args.test_camera_radius)
         options = placement_options(saved, completed) if args.retry_test_placement else None
@@ -174,7 +178,7 @@ def main():
             return
         plan = saved['plan']
         if not remaining:
-            capture_plan(None, args.resume, resume=True, pilot=args.pilot)
+            capture_plan(None, args.resume, resume=True, pilot=args.pilot, expand_plan=args.expand_plan)
             return
         base = dict(plan['cases'][0]['config'])
     else:
@@ -227,7 +231,8 @@ def main():
                                  take_tick=args.take_tick_ownership)
                  if args.retry_test_placement else None)
     capture_plan(plan, args.resume or args.output, take_tick=args.take_tick_ownership,
-                 resume=bool(args.resume), pilot=args.pilot, test_placement=placement,
+                 resume=bool(args.resume), pilot=args.pilot, expand_plan=args.expand_plan,
+                 test_placement=placement,
                  test_camera_radius=args.test_camera_radius)
 
 

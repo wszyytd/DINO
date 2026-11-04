@@ -27,6 +27,8 @@ class Episode:
     actions: tuple
     outcomes: dict
     identities: tuple = ()
+    source_split: str = ''
+    capture_group: str = ''
 
 
 def relative_pose(camera, target):
@@ -140,7 +142,9 @@ def load_episodes(root, cache_root):
         episode = Episode(scene.name, f'position:{position}', position, reference.image_hash,
                           candidates, candidates.index(refs[0]['identity']),
                           ReplayState(candidates, tuple(initial)),
-                          tuple(sorted(actions, key=lambda a: a.id)), outcomes, identities)
+                          tuple(sorted(actions, key=lambda a: a.id)), outcomes, identities,
+                          root.name if root.name in ('train', 'val', 'test') else '',
+                          scene.name.rsplit('_ref', 1)[0])
         episodes.append(episode)
         sources[str(metadata)] = sha256(metadata)
         sources[str(run_path)] = sha256(run_path)

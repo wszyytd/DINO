@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import random
 
 import torch
@@ -51,17 +52,33 @@ def represent_state(model, bank, episode, state, encoder=None):
     return q, memory, counts
 
 
+SCORE_MODES = ('relative_softmax_v2', 'legacy_tanh_v1')
+
+
+def matching_scores(logits, temperature=1., mode='relative_softmax_v2'):
+    """Bounded ranking scores, not calibrated probabilities. v2 ignores common offsets."""
+    if not math.isfinite(temperature) or temperature <= 0 or mode not in SCORE_MODES:
+        raise ValueError('invalid score mode or temperature')
+    if logits.ndim != 2 or logits.shape[1] < 2 or not torch.isfinite(logits).all():
+        raise ValueError('scores require finite batched logits for at least two candidates')
+    if mode == 'legacy_tanh_v1':
+        return torch.tanh(logits / temperature)
+    shifted = logits - logits.max(dim=-1, keepdim=True).values
+    return 2 * torch.softmax(shifted / temperature, dim=-1) - 1
+
+
 class FrozenRuntime:
-    def __init__(self, model, bank, score_temperature=1.):
-        if not 0 < score_temperature < float('inf'):
-            raise ValueError('score temperature must be positive and finite')
+    def __init__(self, model, bank, score_temperature=1., score_mode='relative_softmax_v2'):
+        matching_scores(torch.zeros(1, 2), score_temperature, score_mode)
         self.model = model.eval().requires_grad_(False)
         for parameter in self.model.parameters():
             parameter.grad = None
         self.bank = bank
         self.temperature = float(score_temperature)
+        self.score_mode = score_mode
         payload = {'model': fingerprint(model), 'features': bank.config,
-                   'score_temperature': self.temperature, 'updater_version': 1}
+                   'score_temperature': self.temperature, 'score_mode': score_mode,
+                   'updater_version': 1}
         self.fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         self.device = next(model.parameters()).device
         self.references, self.observations = {}, {}
@@ -84,7 +101,7 @@ class FrozenRuntime:
     @torch.no_grad()
     def encode_state(self, episode, state):
         q, memories, counts = represent_state(self.model, self.bank, episode, state, self._encode)
-        scores = torch.tanh(self.model.match(q, memories) / self.temperature)
+        scores = matching_scores(self.model.match(q, memories), self.temperature, self.score_mode)
         return q, memories, scores, counts
 
 
