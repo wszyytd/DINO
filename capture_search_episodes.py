@@ -20,7 +20,7 @@ OLD = REPO / 'data' / 'grid_pilot_20261109'
 def code_provenance():
     revision = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=REPO, capture_output=True, text=True)
     files = ('capture_search_episodes.py', 'capture.py', 'dinoexp/search_episodes.py',
-             'dinoexp/search_capture.py', 'dinoexp/dense_capture.py')
+             'dinoexp/search_capture.py', 'dinoexp/dense_capture.py', 'dinoexp/core.py')
     return dict(git_head=revision.stdout.strip() if revision.returncode == 0 else None,
                 sources_sha256={name: sha256(REPO / name) for name in files})
 
@@ -39,7 +39,11 @@ def main():
                        help='record a successful visual review after inspecting the real observations')
     parser.add_argument('--reviewed-smoke', type=Path,
                         help='verified smoke dataset with a recorded visual review')
+    parser.add_argument('--resume-after-code-update', action='store_true',
+                        help='resume a compatible capture repair and retain per-episode code provenance')
     args = parser.parse_args()
+    if args.resume_after_code_update and not args.resume:
+        parser.error('--resume-after-code-update requires --resume')
     if args.output:
         args.output = args.output.resolve()
         if args.output.is_relative_to(OLD.resolve()) or OLD.resolve().is_relative_to(args.output):
@@ -105,7 +109,8 @@ def main():
     if args.preflight:
         print(json.dumps(dict(versions=versions, **state), indent=2))
         return 0
-    result = capture_collection(carla, world, versions, cfg, args.output, cases, code_provenance(), args.resume)
+    result = capture_collection(carla, world, versions, cfg, args.output, cases, code_provenance(),
+                                args.resume, args.resume_after_code_update)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

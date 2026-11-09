@@ -9,7 +9,7 @@ import time
 import numpy as np
 from PIL import Image
 from capture import as_transform,find_blueprint
-from .core import image_quality,pose_matches,pose_values
+from .core import camera_pose_matches, image_quality, pose_matches, pose_values
 from .scene import candidate_poses,capture_view_pose
 from .dense_cache import save_json
 from .local_pairs import sha256
@@ -167,6 +167,8 @@ def next_pair(world,queues,desired,cfg):
     for _ in range(cfg['warmup_ticks']):
         barrier=world.tick(cfg['timeout'])
     pending=[{},{}];deadline=time.monotonic()+cfg['timeout']
+    observed = [dict(received=0, after_barrier=0, pose_matched=0,
+                     last_frame=None, last_pose=None) for _ in queues]
     while time.monotonic()<deadline:
         world.tick(min(cfg['timeout'],max(.1,deadline-time.monotonic())))
         for i,q in enumerate(queues):
@@ -175,7 +177,16 @@ def next_pair(world,queues,desired,cfg):
                     frame=q.get_nowait()
                 except queue.Empty:
                     break
-                if frame.frame>=barrier and pose_matches(pose_values(frame.transform),desired):
+                pose = pose_values(frame.transform)
+                stats = observed[i]
+                stats['received'] += 1
+                stats['last_frame'] = frame.frame
+                stats['last_pose'] = pose
+                if frame.frame < barrier:
+                    continue
+                stats['after_barrier'] += 1
+                if camera_pose_matches(pose, desired):
+                    stats['pose_matched'] += 1
                     pending[i][frame.frame]=frame
             if len(pending[i])>64:
                 pending[i]={k:pending[i][k] for k in sorted(pending[i])[-64:]}
@@ -187,7 +198,9 @@ def next_pair(world,queues,desired,cfg):
                 raise RuntimeError('RGB/instance camera dimensions differ')
             return pair
         time.sleep(.002)
-    raise TimeoutError('no synchronized RGB/instance frames at requested pose')
+    raise TimeoutError('no synchronized RGB/instance frames at requested pose; '
+                       f'requested={desired}; frame_barrier={barrier}; '
+                       f'RGB={observed[0]}; instance={observed[1]}')
 
 
 def _rgb(image):

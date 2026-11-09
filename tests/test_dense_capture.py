@@ -1,10 +1,10 @@
-from contextlib import contextmanager
 import copy
 import json
 from pathlib import Path
 import tempfile
 import subprocess
 import sys
+import queue
 from types import SimpleNamespace
 import unittest
 import numpy as np
@@ -12,6 +12,27 @@ from dinoexp.dense_capture import decode_instance_ids, discover_instance_ids, ma
 
 
 class DenseCaptureTests(unittest.TestCase):
+    def test_synchronizer_accepts_equivalent_nadir_rotations(self):
+        from dinoexp.core import camera_pose_matches
+        from dinoexp.dense_capture import next_pair
+        desired = (26, 134, 8.6, -90, -179.6786, 0)
+        self.assertFalse(camera_pose_matches((26, 134, 8.6, -90, -90, 0), desired))
+        frames = [queue.Queue(), queue.Queue()]
+        transform = SimpleNamespace(location=SimpleNamespace(x=26, y=134, z=8.6),
+                                    rotation=SimpleNamespace(pitch=-90, yaw=-90, roll=-89.6786))
+        count = 0
+
+        def tick(_):
+            nonlocal count
+            count += 1
+            for sensor in frames:
+                sensor.put(SimpleNamespace(frame=count, transform=transform, width=1024, height=768))
+            return count
+
+        rgb, mask = next_pair(SimpleNamespace(tick=tick), frames, desired,
+                              dict(warmup_ticks=1, timeout=.02))
+        self.assertEqual(rgb.frame, mask.frame)
+
     def test_instance_ids_use_g_low_b_high_and_are_not_python_actor_ids(self):
         rgb=np.array([[[14,2,1],[15,255,3]]],np.uint8)
         self.assertEqual(decode_instance_ids(rgb).tolist(),[[258,1023]])

@@ -364,21 +364,41 @@ def capture_episode(carla, world, versions, config, root, case):
     return episode
 
 
-def capture_collection(carla, world, versions, config, root, cases, code, resume=False):
+def register_resume(manifest, cases, config, code, allow_code_update):
+    if manifest['cases'] != cases or manifest['config'] != config:
+        raise ValueError('resume requires the same plan and configuration')
+    previous = manifest['code']
+    if previous != code and not allow_code_update:
+        raise ValueError('capture source changed; use --resume-after-code-update for a compatible repair')
+    episode_code = manifest.setdefault('episode_code', {})
+    for episode in manifest['completed_episodes']:
+        episode_code.setdefault(episode, previous)
+    if previous != code:
+        manifest.setdefault('code_history', []).append(dict(previous=previous, current=code,
+            updated_utc=datetime.now(timezone.utc).isoformat()))
+        manifest['code'] = code
+    return previous
+
+
+def capture_collection(carla, world, versions, config, root, cases, code, resume=False,
+                       allow_code_update=False):
     root = Path(root).resolve()
     groups = validate_splits(cases)
     preflight(world, config['map'])
     manifest_path = root / 'dataset_manifest.json'
     if resume:
         manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
-        if manifest['cases'] != cases or manifest['config'] != config or manifest['code'] != code:
-            raise ValueError('resume requires the same plan, configuration and source code')
+        for filename, expected in [('action_spec.json', ACTION_SPEC), ('quality_spec.json', QUALITY_SPEC)]:
+            if json.loads((root / filename).read_text(encoding='utf-8')) != expected:
+                raise ValueError(f'resume requires an unchanged {filename}')
+        previous_code = register_resume(manifest, cases, config, code, allow_code_update)
     else:
         root.mkdir(parents=True, exist_ok=False)
         manifest = dict(format_version=1, status='incomplete', config=config, cases=cases,
-                        code=code, completed_episodes=[], capture_mode=ACTION_SPEC['mode'],
+                        code=code, completed_episodes=[], episode_code={}, capture_mode=ACTION_SPEC['mode'],
                         support='offline_memory_only', collision_validation='unknown',
                         visual_review='pending', independent_unseen_asset_test=False)
+        previous_code = code
     with (root / '.capture.lock').open('x', encoding='utf-8'):
         pass
     try:
@@ -393,6 +413,7 @@ def capture_collection(carla, world, versions, config, root, cases, code, resume
                 status = json.loads(marker.read_text(encoding='utf-8')).get('status') if marker.exists() else None
                 if status == 'complete' or case['episode_id'] in manifest['completed_episodes']:
                     validate_episode(root, case)
+                    manifest['episode_code'].setdefault(case['episode_id'], previous_code)
                     if case['episode_id'] not in manifest['completed_episodes']:
                         manifest['completed_episodes'].append(case['episode_id'])
                     continue
@@ -407,6 +428,7 @@ def capture_collection(carla, world, versions, config, root, cases, code, resume
                       layout_source='fixed parked pair with recorded spawn anchor and offsets'))
             capture_episode(carla, world, versions, config, root, case)
             manifest['completed_episodes'].append(case['episode_id'])
+            manifest['episode_code'][case['episode_id']] = code
             save_json(manifest_path, manifest)
         result = validate_dataset(root)
         if result['errors']:

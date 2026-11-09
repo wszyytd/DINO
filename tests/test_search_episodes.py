@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from dinoexp.dense_cache import save_json
-from dinoexp.search_capture import preflight, save_observation, save_reference
+from dinoexp.search_capture import preflight, register_resume, save_observation, save_reference
 from dinoexp.search_episodes import (action_trace, instance_labels, iter_v1_inputs,
                                     recognition_quality, validate_episode, validate_splits)
 
@@ -46,6 +46,20 @@ def test_preflight_refuses_existing_synchronous_session():
                             get_settings=lambda: SimpleNamespace(synchronous_mode=True))
     with pytest.raises(RuntimeError, match='synchronous tick'):
         preflight(world, 'Town10HD_Opt')
+
+
+def test_explicit_code_update_preserves_completed_capture_provenance():
+    config, cases = {'seed': 7}, [{'episode_id': 'old'}, {'episode_id': 'pending'}]
+    original = dict(config=config, cases=cases, code={'git_head': 'old'}, completed_episodes=['old'])
+    new = {'git_head': 'new'}
+    with pytest.raises(ValueError, match='resume-after-code-update'):
+        register_resume(original, cases, config, new, False)
+    register_resume(original, cases, config, new, True)
+    assert original['code'] == new
+    assert original['episode_code'] == {'old': {'git_head': 'old'}}
+    assert original['code_history'][-1]['previous'] == {'git_head': 'old'}
+    with pytest.raises(ValueError, match='plan'):
+        register_resume(original, [], config, new, True)
 
 
 def test_derivatives_and_layouts_cannot_cross_splits():

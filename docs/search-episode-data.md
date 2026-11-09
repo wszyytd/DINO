@@ -16,6 +16,8 @@ conda run --no-capture-output -n carla10 python -u capture_search_episodes.py \
 
 `--dry-run` 只打印计划。因采集失败需要续跑时，保持同一配置和代码版本，在原命令末尾加 `--resume`。已完成序列先重新验证。未完成目录移到该数据集的 `failed_attempts/`，保留现场，随后从起点重采整条序列。失败记录也在每个序列的 `audit/failures.jsonl` 中。若进程被强行终止并留下 `.capture.lock`，先确认旧进程和其 CARLA 会话已经停止，再另开新的输出目录或处理残留锁。
 
+从 `0119509` 升级采集器后续采，使用 `--resume --resume-after-code-update`。配置、路线、动作定义和质量规则须一致。已完成序列保留原代码版本，清单按序列记录各自使用的源码。相机配对按实际旋转比较正俯视姿态。超时记录包含两个传感器的收帧、姿态匹配计数和最近帧状态。
+
 ## 输出和语义
 
 - `dataset_manifest.json` 固定配置、代码源文件哈希、种子、布局、参考角色、序列计划和完成状态。`splits.json` 按布局组划分。此配置只使用两种车辆资产，评估只能称为布局或背景留出检查。

@@ -11,7 +11,7 @@ import re
 import numpy as np
 from PIL import Image
 
-from .core import checked_path, pose_matches
+from .core import camera_pose_matches, checked_path, pose_matches
 from .dense_cache import save_json
 from .dense_capture import decode_instance_ids
 from .local_pairs import sha256
@@ -308,7 +308,7 @@ def check_pair(observation):
     rgb, instance = observation['rgb'], observation['instance']
     if any(rgb[k] != instance[k] for k in ('frame', 'timestamp', 'width', 'height', 'intrinsics')):
         raise ValueError('RGB and instance sensor frames or calibrations do not match')
-    if not pose_matches(rgb['pose'], instance['pose'], .005, .05):
+    if not camera_pose_matches(rgb['pose'], instance['pose'], .005, .05):
         raise ValueError('RGB and instance camera pose mismatch')
 
 

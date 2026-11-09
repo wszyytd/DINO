@@ -31,6 +31,24 @@ def pose_matches(actual, desired, position_tolerance=0.03, angle_tolerance=0.5):
     )
 
 
+def camera_pose_matches(actual, desired, position_tolerance=0.03, angle_tolerance=0.5):
+    """Compare physical orientations, including equivalent Euler angles at nadir."""
+    if not math.dist(actual[:3], desired[:3]) <= position_tolerance:
+        return False
+
+    def basis(pose):
+        pitch, yaw, roll = map(math.radians, pose[3:])
+        cp, cy, cr = math.cos(pitch), math.cos(yaw), math.cos(roll)
+        sp, sy, sr = math.sin(pitch), math.sin(yaw), math.sin(roll)
+        # CARLA Transform::GetMatrix rotation block, in its left-handed frame.
+        return (cp * cy, cy * sp * sr - sy * cr, -cy * sp * cr - sy * sr,
+                cp * sy, sy * sp * sr + cy * cr, -sy * sp * cr + cy * sr,
+                sp, -cp * sr, cp * cr)
+
+    difference = sum((a - b) ** 2 for a, b in zip(basis(actual), basis(desired), strict=True))
+    return difference <= 8 * math.sin(math.radians(angle_tolerance) / 2) ** 2
+
+
 def select_frame(frames, minimum_frame, desired):
     for frame, pose, payload in frames:
         if frame >= minimum_frame and pose_matches(pose, desired):
