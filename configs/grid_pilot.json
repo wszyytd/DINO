@@ -1,0 +1,27 @@
+{
+  "host": "127.0.0.1",
+  "port": 2000,
+  "timeout": 60,
+  "width": 1024,
+  "height": 768,
+  "fov": 70,
+  "fixed_delta": 0.05,
+  "settle_ticks": 40,
+  "warmup_ticks": 60,
+  "anchor_spawn_index": 42,
+  "separation": 8,
+  "target_identity": "A",
+  "candidates": [
+    {"identity": "A", "blueprint": "vehicle.dodge.charger", "color": "235,235,235"},
+    {"identity": "B", "blueprint": "vehicle.lincoln.mkz", "color": "235,235,235"}
+  ],
+  "camera_attributes": {
+    "exposure_mode": "histogram", "gamma": 2.2, "motion_blur_intensity": 0
+  },
+  "weather": {
+    "sun_altitude_angle": 60, "sun_azimuth_angle": 30, "cloudiness": 10,
+    "precipitation": 0, "wetness": 0, "fog_density": 0
+  },
+  "reference": {"azimuth": 45, "elevation": 24, "distance": 19.7},
+  "grid_capture": {"size": 3, "spacing_m": 8, "height_m": 8, "oblique_pitch_deg": -45}
+}

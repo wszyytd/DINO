@@ -1,7 +1,6 @@
 """Synchronized pixel masks identified by remove/restore probes, never actor.id."""
 from contextlib import contextmanager
 import html
-import json
 import math
 from pathlib import Path
 import queue
@@ -16,9 +15,58 @@ from .dense_cache import save_json
 from .local_pairs import sha256
 
 
+def grid_views(grid):
+    size = grid.get('size')
+    if type(size) is not int or size < 1:
+        raise ValueError('grid size must be a positive integer')
+    for field in ('spacing_m', 'height_m', 'oblique_pitch_deg'):
+        value = grid.get(field)
+        if type(value) not in (int, float) or not math.isfinite(value):
+            raise ValueError('invalid grid ' + field)
+    if grid['spacing_m'] <= 0 or grid['height_m'] <= 0:
+        raise ValueError('grid spacing and height must be positive')
+    if not -90 < grid['oblique_pitch_deg'] < 0:
+        raise ValueError('oblique pitch must be between -90 and 0 degrees')
+
+    middle = (size - 1) / 2
+    views = []
+    for row in range(size):
+        for col in range(size):
+            for direction, yaw in (('down', 0), ('front', 0), ('right', 90),
+                                   ('back', 180), ('left', 270)):
+                views.append(dict(
+                    name=f'r{row:02d}_c{col:02d}_{direction}', grid_cell=[row, col],
+                    direction=direction, relative_yaw=yaw,
+                    pitch=-90 if direction == 'down' else grid['oblique_pitch_deg'],
+                    offset_forward_m=(middle - row) * grid['spacing_m'],
+                    offset_right_m=(col - middle) * grid['spacing_m'],
+                    height_m=grid['height_m'],
+                ))
+    # Use the most central overhead frame to identify both vehicles first.
+    calibration = min(views, key=lambda view: (
+        view['direction'] != 'down',
+        view['offset_forward_m'] ** 2 + view['offset_right_m'] ** 2,
+    ))
+    views.remove(calibration)
+    return [calibration, *views]
+
+
+def grid_camera_pose(center, anchor, view):
+    angle = math.radians(anchor[4])
+    forward, right = view['offset_forward_m'], view['offset_right_m']
+    return (
+        center[0] + forward * math.cos(angle) - right * math.sin(angle),
+        center[1] + forward * math.sin(angle) + right * math.cos(angle),
+        anchor[2] + view['height_m'], view['pitch'],
+        (anchor[4] + view['relative_yaw'] + 180) % 360 - 180, 0.0,
+    )
+
+
 def validate_dense_config(cfg):
     from .scene import validate_scene
     validate_scene(cfg)
+    if 'grid_capture' in cfg:
+        cfg = dict(cfg, views=grid_views(cfg['grid_capture']))
     for field in ('width','height','warmup_ticks','settle_ticks'):
         if type(cfg.get(field)) is not int or cfg[field]<1:
             raise ValueError('dense '+field+' must be a positive integer')
@@ -31,7 +79,8 @@ def validate_dense_config(cfg):
     if (not names or len(names)!=len(set(names)) or
             any(not re.fullmatch(r'[A-Za-z0-9_-]+',name) for name in names) or names[0]+'_absent' in names):
         raise ValueError('dense view names must be distinct safe filenames without Null collision')
-    for view in [cfg['reference'],*views]:
+    orbit_views = [] if 'grid_capture' in cfg else views
+    for view in [cfg['reference'],*orbit_views]:
         for field in ('azimuth','elevation','distance'):
             if not isinstance(view.get(field),(int,float)) or not math.isfinite(view[field]):
                 raise ValueError('invalid dense view '+field)
@@ -156,14 +205,17 @@ def write_preview(output,run):
                 source=Image.composite(Image.new('RGB',source.size,color),source,alpha)
         source.thumbnail((1200,900));source.save(output/'preview'/f'{i}.png')
         cards.append(f'<h2>{html.escape(sample["id"])} — {sample["presence"]}</h2><img src="preview/{i}.png">')
+    note = ('每个网格点有四向斜视和一张俯视。absent 表示当前图中看不到目标。'
+            if 'grid_capture' in run['config'] else 'Null帧已移除自建目标。')
     (output/'preview.html').write_text('<!doctype html><meta charset="utf-8"><title>可见实例掩码采集</title>'
         '<style>body{font:17px sans-serif;margin:30px auto;max-width:1200px}img{max-width:100%}</style>'
-        '<h1>参考与可见实例掩码</h1><p>绿色为参考目标，蓝色为干扰车辆；请检查边界与遮挡。Null帧已移除自建目标。</p>'
+        '<h1>参考与可见实例掩码</h1><p>绿色为参考目标，蓝色为干扰车辆。'+note+'</p>'
         '<img src="reference.png">'+''.join(cards),encoding='utf-8')
 
 
 def capture_dense_scene(carla,world,versions,cfg,output,take_tick=False):
-    validate_dense_config(cfg)
+    cfg = validate_dense_config(cfg)
+    grid_mode = 'grid_capture' in cfg
     output=Path(output)
     if cfg.get('hide_environment_objects'):
         raise ValueError('dense capture rejects environment hiding without known previous state')
@@ -192,7 +244,8 @@ def capture_dense_scene(carla,world,versions,cfg,output,take_tick=False):
             weather=world.get_weather()
             for k,v in cfg['weather'].items():setattr(weather,k,v)
             world.set_weather(weather)
-            poses=candidate_poses(pose_values(points[index]),cfg['separation'],
+            anchor=pose_values(points[index])
+            poses=candidate_poses(anchor,cfg['separation'],
                                   [c.get('yaw_offset',0) for c in cfg['candidates']])
             for candidate,pose in zip(cfg['candidates'],poses,strict=True):
                 bp=find_blueprint(library,candidate['blueprint']);bp.set_attribute('color',candidate['color'])
@@ -230,8 +283,12 @@ def capture_dense_scene(carla,world,versions,cfg,output,take_tick=False):
                 owned.append(sensor);sensors.append(sensor)
                 q=queue.Queue(maxsize=64);queues.append(q);sensor.listen(_receive(q))
             def photograph(view,is_reference=False):
-                pose=capture_view_pose(target[3] if is_reference else center,points[index].rotation.yaw,
-                    target[2].rotation.yaw,view,is_reference=is_reference,query_yaw_mode=cfg.get('query_yaw_mode','anchor'))
+                if grid_mode and not is_reference:
+                    pose=grid_camera_pose(center,anchor,view)
+                else:
+                    pose=capture_view_pose(target[3] if is_reference else center,anchor[4],
+                        target[2].rotation.yaw,view,is_reference=is_reference,
+                        query_yaw_mode=cfg.get('query_yaw_mode','anchor'))
                 for sensor in sensors:sensor.set_transform(as_transform(carla,pose))
                 rgb,instance=next_pair(world,queues,pose,cfg)
                 picture=Image.fromarray(_rgb(rgb))
@@ -278,29 +335,33 @@ def capture_dense_scene(carla,world,versions,cfg,output,take_tick=False):
                     if visible.any():
                         path=f'masks/{name}_{identity}.png'
                         Image.fromarray(visible.astype(np.uint8)*255).save(output/path);masks[identity]=path
-                if not absent and cfg['target_identity'] not in masks:
+                if not grid_mode and not absent and cfg['target_identity'] not in masks:
                     raise RuntimeError('present query target has no visible mask; inspect geometry/occlusion')
-                positive=[] if absent else [masks[cfg['target_identity']]]
+                positive=[masks[cfg['target_identity']]] if cfg['target_identity'] in masks else []
                 negative=[p for k,p in masks.items() if k!=cfg['target_identity']]
-                run['samples'].append(dict(id=cfg.get('dense_case',output.name)+':'+name,
+                sample=dict(id=cfg.get('dense_case',output.name)+':'+name,
                     split=cfg.get('dense_split','train'),group=cfg.get('dense_group',output.name),
                     reference='reference.png',reference_sha256=reference_hash,image=image_path,
                     image_sha256=sha256(output/image_path),positive_masks=positive,negative_masks=negative,
-                    mask_sha256={p:sha256(output/p) for p in masks.values()},presence='absent' if absent else 'present',
+                    mask_sha256={p:sha256(output/p) for p in masks.values()},presence='present' if positive else 'absent',
                     supervision='simulation',mask_source='carla_instance_verified',
-                    camera_pose=list(pose_values(rgb_frame.transform)),fov=cfg['fov'],frame=rgb_frame.frame))
+                    camera_pose=list(pose_values(rgb_frame.transform)),fov=cfg['fov'],frame=rgb_frame.frame)
+                if grid_mode:
+                    sample.update(grid_cell=view['grid_cell'], direction=view['direction'], visible_masks=masks)
+                run['samples'].append(sample)
                 save_json(output/'run.json',run)
-                print('dense '+name+': visible masks saved',flush=True)
+                print(f'dense {name}: {sample["presence"]}, {len(masks)} vehicles visible',flush=True)
             for view in cfg['views']:
                 picture,instances,rgb_frame=photograph(view)
                 if any(not pose_matches(pose_values(a.get_transform()),pose_values(tf)) for _,a,tf,_ in geometry):
                     raise RuntimeError('owned candidate moved during dense capture')
                 save_sample(view,picture,instances,rgb_frame)
-            # Confirmed Null with the SAME scene/camera and the distractor still alive.
-            if not target[1].destroy():raise RuntimeError('cannot remove owned target for Null capture')
-            owned.remove(target[1])
-            picture,instances,rgb_frame=photograph(cfg['views'][0])
-            save_sample(cfg['views'][0],picture,instances,rgb_frame,True)
+            if not grid_mode:
+                # Existing orbit dataset uses an intervention to produce one Null sample.
+                if not target[1].destroy():raise RuntimeError('cannot remove owned target for Null capture')
+                owned.remove(target[1])
+                picture,instances,rgb_frame=photograph(cfg['views'][0])
+                save_sample(cfg['views'][0],picture,instances,rgb_frame,True)
         if run['cleanup_errors']:raise RuntimeError('dense cleanup failed: '+str(run['cleanup_errors']))
         run['status']='complete'
     except BaseException as error:
