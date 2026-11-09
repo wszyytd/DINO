@@ -18,6 +18,8 @@ conda run --no-capture-output -n carla10 python -u capture_search_episodes.py \
 
 从 `0119509` 升级采集器后续采，使用 `--resume --resume-after-code-update`。配置、路线、动作定义和质量规则须一致。已完成序列保留原代码版本，清单按序列记录各自使用的源码。相机配对按实际旋转比较正俯视姿态。超时记录包含两个传感器的收帧、姿态匹配计数和最近帧状态。
 
+每个动作子步用同步批处理确认两台相机的变换，再推进一个 tick。审计轨迹记录这个 tick 的世界快照编号和两台相机的实际姿态。升级时同样使用 `--resume --resume-after-code-update`，已通过复验的旧序列可以继续使用。[CARLA 0.10.0 批处理实现](https://github.com/carla-simulator/carla/blob/0.10.0/Unreal/CarlaUnreal/Plugins/Carla/Source/Carla/Server/CarlaServer.cpp#L2401)
+
 ## 输出和语义
 
 - `dataset_manifest.json` 固定配置、代码源文件哈希、种子、布局、参考角色、序列计划和完成状态。`splits.json` 按布局组划分。此配置只使用两种车辆资产，评估只能称为布局或背景留出检查。

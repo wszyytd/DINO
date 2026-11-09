@@ -12,7 +12,7 @@ import numpy as np
 from PIL import Image
 
 from capture import as_transform, find_blueprint
-from .core import camera_pose, checked_path, image_quality, pose_matches, pose_values
+from .core import camera_pose, camera_pose_matches, checked_path, image_quality, pose_matches, pose_values
 from .dense_cache import save_json
 from .dense_capture import (_receive, _rgb, decode_instance_ids, discover_instance_ids,
                             managed_capture, next_pair, occlusion_probe_pose)
@@ -205,15 +205,34 @@ def save_reference(root, directory, pixels, raw, metadata, mask, target):
     return result
 
 
-def execute_action(carla, world, sensors, cfg, previous, name, trace):
+def execute_action(carla, client, world, sensors, cfg, previous, name, trace):
     start = previous['pose']
     for desired in action_trace(start, name):
-        place_camera(carla, sensors, desired)
+        entry = dict(commanded_pose=desired)
+        trace.append(entry)
+        # CARLA 0.10.0 Actor.set_transform uses an async RPC. Both transforms
+        # must finish on the server before the sole tick for this substep.
+        transform = as_transform(carla, desired)
+        commands = [carla.command.ApplyTransform(sensor.id, transform) for sensor in sensors]
+        responses = client.apply_batch_sync(commands, False)
+        errors = [response.error for response in responses]
+        if len(responses) != len(commands) or any(errors):
+            entry['command_errors'] = errors
+            raise RuntimeError(f'kinematic action {name}: transform batch failed: {errors}')
         frame = world.tick(cfg['timeout'])
-        actual = list(pose_values(sensors[0].get_transform()))
-        trace.append(dict(frame=frame, commanded_pose=desired, actual_pose=actual))
-        if not pose_matches(actual, desired):
-            raise RuntimeError(f'kinematic action {name} did not reach commanded interpolation pose')
+        snapshot = world.get_snapshot()
+        entry.update(frame=frame, snapshot_frame=snapshot.frame)
+        if snapshot.frame != frame:
+            raise RuntimeError(f'kinematic action {name}: tick {frame}, snapshot {snapshot.frame}')
+        states = [snapshot.find(sensor.id) for sensor in sensors]
+        if any(state is None for state in states):
+            raise RuntimeError(f'kinematic action {name}: camera missing from snapshot {frame}')
+        actual, actual_instance = [list(pose_values(state.get_transform())) for state in states]
+        entry.update(actual_pose=actual, actual_instance_pose=actual_instance)
+        if (not camera_pose_matches(actual, desired) or
+                not camera_pose_matches(actual_instance, actual, .005, .05)):
+            raise RuntimeError(f'kinematic action {name} at frame {frame}: commanded={desired}, '
+                               f'RGB={actual}, instance={actual_instance}')
     return trace[-1]['commanded_pose']
 
 
@@ -254,7 +273,7 @@ def world_start(anchor, center, case, cfg):
             anchor[2] + cfg['height_m'], cfg['pitch_deg'], (anchor[4] + yaw + 180) % 360 - 180, 0]
 
 
-def capture_episode(carla, world, versions, config, root, case):
+def capture_episode(carla, client, world, versions, config, root, case):
     cfg = dict(config['capture'], fixed_delta=ACTION_SPEC['fixed_delta_s'],
                warmup_ticks=ACTION_SPEC['sensor_settle_ticks'])
     state = preflight(world, config['map'])
@@ -323,7 +342,8 @@ def capture_episode(carla, world, versions, config, root, case):
             initial_time = None
             for step, name in enumerate([None, *case['actions']]):
                 trace = []
-                pose = execute_action(carla, world, sensors, cfg, previous, name, trace) if name else start
+                pose = (execute_action(carla, client, world, sensors, cfg, previous, name, trace)
+                        if name else start)
                 pixels, raw, metadata = photograph(pose, f'observation_{step}')
                 if any(not pose_matches(pose_values(actor.get_transform()), pose_values(tf))
                        for actor, tf, _, _ in geometry.values()):
@@ -380,7 +400,7 @@ def register_resume(manifest, cases, config, code, allow_code_update):
     return previous
 
 
-def capture_collection(carla, world, versions, config, root, cases, code, resume=False,
+def capture_collection(carla, client, world, versions, config, root, cases, code, resume=False,
                        allow_code_update=False):
     root = Path(root).resolve()
     groups = validate_splits(cases)
@@ -426,7 +446,7 @@ def capture_collection(carla, world, versions, config, root, cases, code, resume
             save_json(scene / 'scene.json', dict(scene_id=case['scene_id'], group=case['group'],
                       split=case['split'], layout=case['layout'], ambiguity='not_flagged',
                       layout_source='fixed parked pair with recorded spawn anchor and offsets'))
-            capture_episode(carla, world, versions, config, root, case)
+            capture_episode(carla, client, world, versions, config, root, case)
             manifest['completed_episodes'].append(case['episode_id'])
             manifest['episode_code'][case['episode_id']] = code
             save_json(manifest_path, manifest)

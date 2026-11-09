@@ -102,14 +102,14 @@ def main():
 
     import carla
     from capture import connect
-    _, world, versions = connect(carla, cfg['capture'])
+    client, world, versions = connect(carla, cfg['capture'])
     if versions[0] != versions[1]:
         raise RuntimeError(f'exact CARLA version match required: {versions}')
     state = preflight(world, cfg['map'])
     if args.preflight:
         print(json.dumps(dict(versions=versions, **state), indent=2))
         return 0
-    result = capture_collection(carla, world, versions, cfg, args.output, cases, code_provenance(),
+    result = capture_collection(carla, client, world, versions, cfg, args.output, cases, code_provenance(),
                                 args.resume, args.resume_after_code_update)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

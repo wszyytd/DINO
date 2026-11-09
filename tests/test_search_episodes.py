@@ -5,7 +5,8 @@ import numpy as np
 import pytest
 
 from dinoexp.dense_cache import save_json
-from dinoexp.search_capture import preflight, register_resume, save_observation, save_reference
+from dinoexp.search_capture import (execute_action, preflight, register_resume, save_observation,
+                                    save_reference)
 from dinoexp.search_episodes import (action_trace, instance_labels, iter_v1_inputs,
                                     recognition_quality, validate_episode, validate_splits)
 
@@ -19,6 +20,46 @@ def test_relative_motion_and_yaw_share_fixed_height_and_pitch():
     assert action_trace(trace[-1], 'yaw_right')[-1] == pytest.approx(
         [10, 20.5, 8.6, -45, 105, 0]
     )
+
+
+def test_yaw_substeps_acknowledge_both_cameras_before_tick(monkeypatch):
+    start = [28.70821, 139.00932, 8.6000004, -45, -89.6795349, 0]
+    sensors = [SimpleNamespace(id=40), SimpleNamespace(id=41)]
+    carla = SimpleNamespace(command=SimpleNamespace(ApplyTransform=lambda actor, pose: (actor, pose)))
+    monkeypatch.setattr('dinoexp.search_capture.as_transform', lambda _, pose: pose)
+    monkeypatch.setattr('dinoexp.search_capture.pose_values', tuple)
+    poses = {camera.id: start for camera in sensors}
+    events, trace = [], []
+    tick_number = 126136
+
+    def apply_batch_sync(commands, do_tick):
+        assert do_tick is False
+        assert [camera for camera, _ in commands] == [40, 41]
+        poses.update(commands)
+        events.append('acknowledged')
+        return [SimpleNamespace(error='') for _ in commands]
+
+    def tick(_):
+        nonlocal tick_number
+        assert events[-1] == 'acknowledged'
+        events.append('tick')
+        tick_number += 1
+        return tick_number
+
+    def snapshot():
+        events.append('snapshot')
+        return SimpleNamespace(frame=tick_number,
+                               find=lambda actor: SimpleNamespace(get_transform=lambda: poses[actor]))
+
+    end = execute_action(carla, SimpleNamespace(apply_batch_sync=apply_batch_sync),
+                         SimpleNamespace(tick=tick, get_snapshot=snapshot), sensors,
+                         {'timeout': 15}, {'pose': start}, 'yaw_left', trace)
+
+    assert events == ['acknowledged', 'tick', 'snapshot'] * 4
+    assert trace[0]['actual_pose'][4] == pytest.approx(-93.4295349)
+    assert end[4] == pytest.approx(-104.6795349)
+    assert [row['snapshot_frame'] for row in trace] == list(range(126137, 126141))
+    assert all(row['actual_pose'] == row['actual_instance_pose'] for row in trace)
 
 
 def test_opaque_ids_and_ignore_mask_are_separate():

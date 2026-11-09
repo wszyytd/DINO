@@ -11,7 +11,7 @@ import re
 import numpy as np
 from PIL import Image
 
-from .core import camera_pose_matches, checked_path, pose_matches
+from .core import camera_pose_matches, checked_path
 from .dense_cache import save_json
 from .dense_capture import decode_instance_ids
 from .local_pairs import sha256
@@ -330,10 +330,13 @@ def check_transition(previous, current, action, name):
     for tick, desired in zip(ticks, expected, strict=True):
         if not previous_tick < tick['frame'] < end['frame'] or tick['commanded_pose'] != desired:
             raise ValueError('invalid interpolation tick or commanded pose')
-        if not pose_matches(tick['actual_pose'], desired):
+        if not camera_pose_matches(tick['actual_pose'], desired):
             raise ValueError('motion interpolation deviated from command')
+        if 'snapshot_frame' in tick and (tick['snapshot_frame'] != tick['frame'] or
+                not camera_pose_matches(tick['actual_pose'], tick['actual_instance_pose'], .005, .05)):
+            raise ValueError('interpolation camera snapshots do not match')
         previous_tick = tick['frame']
-    if not pose_matches(end['pose'], expected[-1]):
+    if not camera_pose_matches(end['pose'], expected[-1]):
         raise ValueError('end pose does not match action command')
 
 
