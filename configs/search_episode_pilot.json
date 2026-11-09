@@ -1,0 +1,26 @@
+{
+  "map": "Town10HD_Opt",
+  "seed": 20261109,
+  "capture": {
+    "host": "127.0.0.1", "port": 2000, "timeout": 15,
+    "width": 1024, "height": 768, "fov": 70,
+    "height_m": 8, "pitch_deg": -45, "settle_ticks": 40,
+    "lens_attributes": {"lens_k": 0, "lens_kcube": 0},
+    "camera_attributes": {"exposure_mode": "histogram", "gamma": 2.2, "motion_blur_intensity": 0},
+    "weather": {"sun_altitude_angle": 60, "sun_azimuth_angle": 30, "cloudiness": 10,
+                "precipitation": 0, "wetness": 0, "fog_density": 0},
+    "reference": {"azimuth": 65, "elevation": 18, "distance": 8},
+    "candidates": [
+      {"identity": "A", "blueprint": "vehicle.dodge.charger", "color": "235,235,235"},
+      {"identity": "B", "blueprint": "vehicle.lincoln.mkz", "color": "235,235,235"}
+    ]
+  },
+  "layouts": [
+    {"anchor_spawn_index": 42, "separation_m": 8, "car_yaw_offsets": [0,0], "target": "A", "split": "train", "smoke_template": "discover"},
+    {"anchor_spawn_index": 64, "separation_m": 8, "car_yaw_offsets": [6,-6], "target": "B", "split": "val", "smoke_template": "compare"},
+    {"anchor_spawn_index": 42, "separation_m": 9, "car_yaw_offsets": [-6,10], "target": "A", "split": "train", "smoke_template": "reappear"},
+    {"anchor_spawn_index": 64, "separation_m": 9, "car_yaw_offsets": [10,4], "target": "B", "split": "val"},
+    {"anchor_spawn_index": 42, "separation_m": 7.5, "car_yaw_offsets": [8,-4], "target": "B", "split": "train"},
+    {"anchor_spawn_index": 64, "separation_m": 7.5, "car_yaw_offsets": [-10,8], "target": "A", "split": "val"}
+  ]
+}
