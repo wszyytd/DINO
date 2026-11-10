@@ -213,32 +213,39 @@ def evaluate_dense(args):
     result=dict(status='running',checkpoint_sha256=sha256(args.checkpoint),
         manifest_sha256=data['_manifest_sha256'],split=args.split,loss=loss,
         **_metrics(rows,probabilities,data['_root'],cache.config['grid_size']))
+    write_dense_report(output,rows,probabilities,data['_root'],cache.config['grid_size'],result)
+    print(json.dumps(result,indent=2),flush=True)
+    return result
+
+
+def write_dense_report(output,rows,probabilities,root,grid,result):
     output.mkdir(parents=True);(output/'assets').mkdir()
-    cards=[];grid=cache.config['grid_size']
+    cards=[]
     with (output/'scores.csv').open('w',encoding='utf-8',newline='') as stream:
         writer=csv.writer(stream);writer.writerow(['id','presence','null_uncalibrated','top1_x','top1_y'])
         for i,(row,p) in enumerate(zip(rows,probabilities,strict=True)):
-            with Image.open(checked_path(data['_root'],row['image'])) as im:
+            with Image.open(checked_path(root,row['image'])) as im:
                 source=im.convert('RGB');source.thumbnail((1400,1000))
-            with Image.open(checked_path(data['_root'],row['reference'])) as im:
+            with Image.open(checked_path(root,row['reference'])) as im:
                 ref=im.convert('RGB');ref.thumbnail((300,300));ref.save(output/'assets'/f'{i}_reference.png')
             heat=p[:-1].reshape(grid,grid)
             alpha=Image.fromarray((heat/max(float(heat.max()),1e-12)*160).astype(np.uint8)).resize(
                 source.size,Image.Resampling.BILINEAR)
             overlay=Image.composite(Image.new('RGB',source.size,(255,0,0)),source,alpha)
             overlay.save(output/'assets'/f'{i}_heatmap.png')
+            if result.get('scope'):
+                source.save(output/'assets'/f'{i}_original.png')
             top=int(np.argmax(p[:-1]));x,y=(top%grid+.5)/grid,(top//grid+.5)/grid
             writer.writerow([row['id'],row['presence'],float(p[-1]),x,y])
             cards.append(f'<article><h2>{html.escape(row["id"])}</h2><p>Null（未校准） {p[-1]:.4f}; '
                 f'真值 {html.escape(row["presence"])}</p><img width="240" src="assets/{i}_reference.png">'
-                f'<img width="900" src="assets/{i}_heatmap.png"></article>')
+                +(f'<a href="assets/{i}_original.png">查看原始航拍图</a>' if result.get('scope') else '')
+                +f'<br><img width="900" src="assets/{i}_heatmap.png"></article>')
     np.savez_compressed(output/'probabilities.npz',probabilities=np.stack(probabilities),
                         ids=np.array([r['id'] for r in rows]))
     (output/'index.html').write_text('<!doctype html><meta charset="utf-8"><title>参考图引导空间搜索</title>'
         '<style>body{font:17px sans-serif;max-width:1200px;margin:30px auto}img{max-width:100%}article{border-top:1px solid #ccc}</style>'
         '<h1>参考图引导航拍搜索</h1><p>热图来自受空间监督的输出，按图归一化显示；不等于车辆部件或身份概率。'
         '真实部分标注中，预测落入未知区域时记为无法判定，单列数量，不当作确认错误。</p>'
-        +''.join(cards),encoding='utf-8')
+        +'<p>'+html.escape(result.get('scope',''))+'</p>'+''.join(cards),encoding='utf-8')
     result['status']='complete';save_json(output/'summary.json',result)
-    print(json.dumps(result,indent=2),flush=True)
-    return result

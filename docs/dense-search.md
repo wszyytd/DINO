@@ -4,6 +4,21 @@
 
 当前是根据老师设计说明自行实现，没有老师源码或任务权重。代码测试与本地真实骨干前向通过不等于定位效果得到验证；新的CARLA同步掩码采集及正式训练需要在服务器实际运行。
 
+## 用已采集网格做单布局拟合
+
+已有 `data/search_grid_smoke_v1` 时，可以直接在 `dino-probe` 环境里跑：
+
+```bash
+python -u run_teacher_grid_fit.py --device cuda --epochs 20 \
+  --output out/teacher_grid_fit_e20
+```
+
+默认从现有网格选 4 张航拍原图拟合、2 张留图检查，每张分别与 A、B 的独立参考图配对。四张拟合图分别覆盖双车可见、仅 A 可见、仅 B 可见及两辆参考车都未入画。留图检查也包含双车同框和双车都未入画。两组共享同一布局和参考图，结果属于拟合诊断。
+
+使用冻结的官方 ViT-B/14 和完整的 518 像素、16 视图预设。脚本从随机任务头开始，默认学习率 `2e-4`。需要官方骨干权重时，用 `python download_dino_backbone.py --model dinov2_vitb14`。若修改轮数后另开一轮，可加 `--cache out/teacher_grid_fit_e20/features` 复用相同样本的冻结特征。每次使用一个新输出目录。
+
+输出 `before/index.html`、`after/index.html`、`history.json` 和 `last.pt`。热图来自融合后的空间分数，每张热图独立缩放显示。报告链接到原始航拍图，并逐配对显示 Null。 `after/summary.json` 的 `both_absent_null` 汇总两辆参考车都未入画时的分数。查看选图而不训练可加 `--dry-run`。
+
 ## 计算链路
 
 冻结DINOv2第3/6/9/12层 → 两套独立适配器 → 参考64个局部token和1个整体查询（2层读取） → 航拍整图＋15个源窗（3×5、至多512像素） → 几何嵌入、1层视图Transformer和整图上下文 → 三种显式相关统计＋2层8头交叉注意力 → patch分数与每视图Null → 按原图几何四邻域映射、可靠性及几何权重融合 → 全局存在性与最终空间/Null分布。
