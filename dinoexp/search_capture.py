@@ -85,11 +85,12 @@ def get_pair(world, queues, pose, cfg, failures, context):
                 raise
 
 
-def spawn_scene(carla, world, owned, cfg, case, anchor):
+def spawn_scene(carla, world, owned, cfg, case, anchor, *, actor_poses=None):
     layout = case['layout']
     library = world.get_blueprint_library()
     candidates = cfg['candidates']
-    actor_poses = candidate_poses(anchor, layout['separation_m'], layout['car_yaw_offsets'])
+    if actor_poses is None:
+        actor_poses = candidate_poses(anchor, layout['separation_m'], layout['car_yaw_offsets'])
     actors = []
     for candidate, pose in zip(candidates, actor_poses, strict=True):
         bp = find_blueprint(library, candidate['blueprint'])

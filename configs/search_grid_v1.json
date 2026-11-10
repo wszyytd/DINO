@@ -1,0 +1,179 @@
+{
+  "map": "Town10HD_Opt",
+  "seed": 20261110,
+  "capture": {
+    "host": "127.0.0.1",
+    "port": 2000,
+    "timeout": 15,
+    "width": 1024,
+    "height": 768,
+    "fov": 70,
+    "height_m": 8,
+    "pitch_deg": -45,
+    "settle_ticks": 40,
+    "lens_attributes": {
+      "lens_k": 0,
+      "lens_kcube": 0
+    },
+    "camera_attributes": {
+      "exposure_mode": "histogram",
+      "gamma": 2.2,
+      "motion_blur_intensity": 0
+    },
+    "weather": {
+      "sun_altitude_angle": 60,
+      "sun_azimuth_angle": 30,
+      "cloudiness": 10,
+      "precipitation": 0,
+      "wetness": 0,
+      "fog_density": 0
+    },
+    "reference": {
+      "azimuth": 55,
+      "elevation": 27,
+      "distance": 8
+    },
+    "candidates": [
+      {
+        "identity": "A",
+        "blueprint": "vehicle.dodge.charger",
+        "color": "255,255,255"
+      },
+      {
+        "identity": "B",
+        "blueprint": "vehicle.dodgecop.charger",
+        "color": "255,255,255"
+      }
+    ]
+  },
+  "minimum_vehicle_gap_m": 1.5,
+  "grid": {
+    "size": 5,
+    "spacing_m": 4,
+    "move_speed": 2,
+    "turn_speed": 90,
+    "hold_s": 0.5
+  },
+  "layouts": [
+    {
+      "anchor_spawn_index": 42,
+      "split": "train",
+      "placements": [
+        [
+          -4,
+          -1.5,
+          15
+        ],
+        [
+          3.5,
+          2.5,
+          -25
+        ]
+      ],
+      "grid_center_offset": [
+        0,
+        0
+      ]
+    },
+    {
+      "anchor_spawn_index": 64,
+      "split": "val",
+      "placements": [
+        [
+          3,
+          -2.5,
+          -15
+        ],
+        [
+          -4,
+          1.5,
+          20
+        ]
+      ],
+      "grid_center_offset": [
+        0,
+        0
+      ]
+    },
+    {
+      "anchor_spawn_index": 42,
+      "split": "train",
+      "placements": [
+        [
+          4,
+          1,
+          25
+        ],
+        [
+          -3.5,
+          -3,
+          -15
+        ]
+      ],
+      "grid_center_offset": [
+        2,
+        -1
+      ]
+    },
+    {
+      "anchor_spawn_index": 64,
+      "split": "val",
+      "placements": [
+        [
+          -3.5,
+          2,
+          15
+        ],
+        [
+          4,
+          -2,
+          -20
+        ]
+      ],
+      "grid_center_offset": [
+        -2,
+        1
+      ]
+    },
+    {
+      "anchor_spawn_index": 42,
+      "split": "train",
+      "placements": [
+        [
+          -3.5,
+          2,
+          -15
+        ],
+        [
+          4,
+          -2.5,
+          20
+        ]
+      ],
+      "grid_center_offset": [
+        -1,
+        1
+      ]
+    },
+    {
+      "anchor_spawn_index": 64,
+      "split": "val",
+      "placements": [
+        [
+          3.5,
+          2.5,
+          25
+        ],
+        [
+          -4,
+          -1.5,
+          -15
+        ]
+      ],
+      "grid_center_offset": [
+        1,
+        -1
+      ]
+    }
+  ]
+}
