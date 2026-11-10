@@ -9,6 +9,7 @@ from dinoexp.core import checked_path
 from dinoexp.dense_cache import DenseFeatureCache, extract_dense_features, save_json
 from dinoexp.dense_data import make_targets, read_dense_manifest
 from dinoexp.grid_search_validation import read_json, read_layout
+from dinoexp.local_pairs import sha256
 from dinoexp.search_episodes import json_rows
 
 
@@ -58,20 +59,28 @@ def fit_grid(args, manifest, visibility):
 
     from dinoexp.dense_loss import dense_loss
     from dinoexp.dense_model import DenseSearchHead
-    from dinoexp.dense_training import _metrics, _predict, sample_tensors, write_dense_report
+    from dinoexp.dense_training import (_metrics, _predict, inspect_checkpoint, sample_tensors,
+                                        write_dense_report)
     from dinoexp.local_features import resolve_device
 
     device = resolve_device(args.device, torch)
     torch.set_num_threads(args.threads)
     torch.manual_seed(args.seed)
+    initial_manifest = args.init_checkpoint.with_name('manifest.json') if args.init_checkpoint else None
+    if initial_manifest and initial_manifest.is_file() and read_json(initial_manifest) != manifest:
+        raise ValueError('checkpoint manifest does not match the selected grid pairs')
     args.output.mkdir(parents=True)
     path = args.output/'manifest.json'
-    save_json(path, manifest)
+    if initial_manifest and initial_manifest.is_file():
+        path.write_bytes(initial_manifest.read_bytes())
+    else:
+        save_json(path, manifest)
     data = read_dense_manifest(path, args.data_root)
     root, rows = data['_root'], data['samples']
     fit_count = 2*len(args.fit_states)
     fit_rows, probe_rows = rows[:fit_count], rows[fit_count:]
     run = dict(status='running', scope=SCOPE, epochs=args.epochs, lr=args.lr, seed=args.seed,
+               patience=args.patience, eval_every=args.eval_every, min_delta=args.min_delta,
                device=str(device), fit_states=list(args.fit_states), probe_states=list(args.probe_states),
                visibility=visibility, fit_pairs=len(fit_rows), probe_pairs=len(probe_rows))
     save_json(args.output/'run.json', run)
@@ -81,24 +90,69 @@ def fit_grid(args, manifest, visibility):
     cache.preflight(rows, root)
     grid = cache.config['grid_size']
     labels = [make_targets(row, root, grid) for row in fit_rows]
-    model = DenseSearchHead().to(device)
+    model = DenseSearchHead()
+    provenance = dict(
+        kind='dense_reference_search_v1', stage='simulation', feature_config=cache.config,
+        model_config=model.config, manifest_sha256=data['_manifest_sha256'],
+        training_images=sorted({row[key] for row in fit_rows for key in
+                                ('reference_sha256', 'image_sha256')}),
+        training_groups=sorted({row['group'] for row in fit_rows}), scope=SCOPE)
+    start_epoch = 0
+    if args.init_checkpoint:
+        model, checkpoint = inspect_checkpoint(args.init_checkpoint, cache.config, model.config)
+        if any(checkpoint.get(key) != provenance[key] for key in
+               ('stage', 'manifest_sha256', 'training_images', 'training_groups')):
+            raise ValueError('checkpoint must come from the same simulation fit samples and manifest')
+        start_epoch = checkpoint['epoch']
+        if type(start_epoch) is not int or start_epoch < 0:
+            raise ValueError('checkpoint must record a nonnegative epoch')
+        run['initial_checkpoint'] = dict(path=str(args.init_checkpoint),
+                                         sha256=sha256(args.init_checkpoint), epoch=start_epoch,
+                                         optimizer='new_adamw')
+        del checkpoint
+        print(f'Loaded weights at epoch {start_epoch}; starting a new AdamW optimizer.', flush=True)
+    model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=.01)
+    save_json(args.output/'run.json', run)
 
-    def report(name):
-        output, loss = _predict(model, rows, cache, root, device)
+    def evaluate():
+        fit_scores, fit_loss = _predict(model, fit_rows, cache, root, device)
+        probe_scores, probe_loss = _predict(model, probe_rows, cache, root, device)
+        if not np.isfinite([fit_loss, probe_loss]).all():
+            raise RuntimeError('nonfinite evaluation loss')
+        return fit_scores + probe_scores, fit_loss, probe_loss
+
+    def report(name, evaluation):
+        output, fit_loss, probe_loss = evaluation
+        loss = (fit_loss*len(fit_rows) + probe_loss*len(probe_rows))/len(rows)
         both_absent = {sid for sid, seen in visibility.items() if not any(seen.values())}
         result = dict(scope=SCOPE, loss=loss, **_metrics(rows, output, root, grid),
-                      fit=_metrics(fit_rows, output[:fit_count], root, grid),
-                      probe=_metrics(probe_rows, output[fit_count:], root, grid),
+                      fit=dict(loss=fit_loss, **_metrics(fit_rows, output[:fit_count], root, grid)),
+                      probe=dict(loss=probe_loss, **_metrics(probe_rows, output[fit_count:], root, grid)),
                       both_absent_null={row['id']: float(p[-1])
                                         for row, p in zip(rows, output, strict=True)
                                         if row['id'].rsplit('_', 1)[0] in both_absent})
         write_dense_report(args.output/name, rows, output, root, grid, result)
         return result
 
-    report('before')
+    def save_checkpoint(name, epoch):
+        file = args.output/name
+        temp = file.with_suffix('.pt.tmp')
+        torch.save(dict(provenance, epoch=epoch, model_state=model.state_dict()), temp)
+        temp.replace(file)
+
+    evaluation = evaluate()
+    report('before', evaluation)
+    best_evaluation = evaluation
+    best_epoch = start_epoch
+    plateau_reference = evaluation[1]
+    stale_checks = 0
+    stop_reason = 'epoch_limit'
+    if args.patience:
+        save_checkpoint('best_fit.pt', start_epoch)
     history = []
-    for epoch in range(1, args.epochs+1):
+    for step in range(1, args.epochs+1):
+        epoch = start_epoch+step
         model.train()
         total = 0.
         for index in torch.randperm(len(fit_rows)).tolist():
@@ -111,21 +165,37 @@ def fit_grid(args, manifest, visibility):
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1., error_if_nonfinite=True)
             optimizer.step()
             total += float(loss.detach())
-        history.append(dict(epoch=epoch, fit_loss=total/len(fit_rows)))
+        entry = dict(epoch=epoch, fit_loss=total/len(fit_rows))
+        checked = args.patience and (step % args.eval_every == 0 or step == args.epochs)
+        if checked:
+            evaluation = evaluate()
+            scores, fit_loss, probe_loss = evaluation
+            probe = _metrics(probe_rows, scores[fit_count:], root, grid)
+            if fit_loss < best_evaluation[1]:
+                best_evaluation, best_epoch = evaluation, epoch
+                save_checkpoint('best_fit.pt', epoch)
+            if plateau_reference - fit_loss >= args.min_delta:
+                plateau_reference, stale_checks = fit_loss, 0
+            else:
+                stale_checks += 1
+            entry.update(fit_eval_loss=fit_loss, probe_eval_loss=probe_loss,
+                         probe_top5=probe['spatial_top5'], stale_checks=stale_checks)
+            print(f'Check {epoch} | fit {fit_loss:.6f} | probe {probe_loss:.6f} | '
+                  f'probe Top-5 {probe["spatial_top5"]} | plateau {stale_checks}/{args.patience}', flush=True)
+        history.append(entry)
         save_json(args.output/'history.json', history)
-        print(f'Epoch {epoch}/{args.epochs} | fit loss {history[-1]["fit_loss"]:.6f}', flush=True)
-        temp = args.output/'last.pt.tmp'
-        torch.save(dict(kind='dense_reference_search_v1', stage='simulation', epoch=epoch,
-                        feature_config=cache.config, model_config=model.config, model_state=model.state_dict(),
-                        manifest_sha256=data['_manifest_sha256'],
-                        training_images=sorted({row[key] for row in fit_rows for key in
-                                                ('reference_sha256', 'image_sha256')}),
-                        training_groups=sorted({row['group'] for row in fit_rows}), scope=SCOPE), temp)
-        temp.replace(args.output/'last.pt')
-    final = report('after')
-    run.update(status='complete', after=final)
+        print(f'Epoch {epoch} (+{step}/{args.epochs}) | fit loss {entry["fit_loss"]:.6f}', flush=True)
+        save_checkpoint('last.pt', epoch)
+        if args.patience and stale_checks >= args.patience:
+            stop_reason = 'fit_loss_plateau'
+            break
+    final = report('after', evaluation if args.patience else evaluate())
+    if args.patience:
+        run['best_fit'] = dict(epoch=best_epoch, evaluation=report('best_fit', best_evaluation))
+    run.update(status='complete', start_epoch=start_epoch, final_epoch=epoch,
+               stop_reason=stop_reason, after=final)
     save_json(args.output/'run.json', run)
-    print('Final heatmaps:', args.output/'after/index.html')
+    print(f'Stopped at epoch {epoch}: {stop_reason}. Final heatmaps:', args.output/'after/index.html')
 
 
 def main():
@@ -137,7 +207,11 @@ def main():
     parser.add_argument('--backbone', type=Path)
     parser.add_argument('--fit-states', nargs='+', default=DEFAULT_FIT)
     parser.add_argument('--probe-states', nargs='+', default=DEFAULT_PROBE)
-    parser.add_argument('--epochs', type=int, default=5)
+    parser.add_argument('--init-checkpoint', type=Path, help='start from saved weights with a new optimizer')
+    parser.add_argument('--epochs', type=int, default=5, help='maximum number of additional epochs')
+    parser.add_argument('--patience', type=int, default=0, help='stop after this many stale fit checks (0 disables)')
+    parser.add_argument('--eval-every', type=int, default=5, help='check plateau every N epochs')
+    parser.add_argument('--min-delta', type=float, default=.005, help='minimum meaningful fit loss decrease')
     parser.add_argument('--lr', type=float, default=2e-4)
     parser.add_argument('--device', default='auto')
     parser.add_argument('--seed', type=int, default=7)
@@ -154,6 +228,10 @@ def main():
             parser.error('output and cache must be separate from the captured grid')
     if args.epochs < 1 or args.threads < 1 or not np.isfinite(args.lr) or args.lr <= 0:
         parser.error('epochs, threads and learning rate must be positive')
+    if args.patience < 0 or args.eval_every < 1 or not np.isfinite(args.min_delta) or args.min_delta <= 0:
+        parser.error('invalid patience, check interval, or minimum improvement')
+    if args.init_checkpoint is not None and not args.init_checkpoint.is_file():
+        parser.error('--init-checkpoint must point to an existing checkpoint file')
     manifest, visibility = prepare(args.data_root, args.fit_states, args.probe_states)
     for name, states in [('fit', args.fit_states), ('probe', args.probe_states)]:
         for sid in states:

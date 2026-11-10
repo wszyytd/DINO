@@ -19,6 +19,19 @@ python -u run_teacher_grid_fit.py --device cuda --epochs 20 \
 
 输出 `before/index.html`、`after/index.html`、`history.json` 和 `last.pt`。热图来自融合后的空间分数，每张热图独立缩放显示。报告链接到原始航拍图，并逐配对显示 Null。 `after/summary.json` 的 `both_absent_null` 汇总两辆参考车都未入画时的分数。查看选图而不训练可加 `--dry-run`。
 
+从已训练的权重继续时，沿用同样的网格配对和冻结特征：
+
+```bash
+python -u run_teacher_grid_fit.py --device cuda \
+  --backbone models/dinov2_vitb14_pretrain.pth \
+  --cache out/teacher_grid_fit_e20_retry/features \
+  --init-checkpoint out/teacher_grid_fit_e20_retry/last.pt \
+  --lr 0.00005 --epochs 150 --eval-every 5 --patience 6 --min-delta 0.005 \
+  --output out/teacher_grid_fit_e20_continue
+```
+
+已有的 `last.pt` 保存模型权重，续训用新的 AdamW 状态。 `--epochs` 是追加轮数上限。每 5 轮计算一次整批拟合样本的损失，连续 6 次较上次有效改善累计下降不足 0.005 时停止。留图的损失和 Top‑5 同步写入 `history.json`，只用于诊断。 `run.json` 记录是达到拟合损失平台期还是用完轮数。 `best_fit.pt` 选拟合评估损失最低的检查点，`last.pt` 保存最后一轮。平台期结论仅适用于当前单布局拟合。
+
 ## 计算链路
 
 冻结DINOv2第3/6/9/12层 → 两套独立适配器 → 参考64个局部token和1个整体查询（2层读取） → 航拍整图＋15个源窗（3×5、至多512像素） → 几何嵌入、1层视图Transformer和整图上下文 → 三种显式相关统计＋2层8头交叉注意力 → patch分数与每视图Null → 按原图几何四邻域映射、可靠性及几何权重融合 → 全局存在性与最终空间/Null分布。
