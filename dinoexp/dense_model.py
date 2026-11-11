@@ -62,13 +62,12 @@ class DenseSearchHead(nn.Module):
             description,_=block(description,r,keep)
         return r,keep,description[:,0]
 
-    def forward(self,reference,reference_valid,views,view_valid,geometry,indices,weights,
-                priors,view_weights,camera_state,camera_valid):
+    def encode_views(self, views, view_valid, geometry):
+        """Reference-independent features; no camera-state or target interaction."""
         b,v,l,n,c=views.shape
         valid=view_valid.bool()
-        if not valid.any(-1).all() or (priors<=0).any() or (view_weights<=0).any():
-            raise ValueError('every view needs valid content and positive fusion weights')
-        r,rvalid,description=self._reference(reference,reference_valid.bool())
+        if not valid.any(-1).all():
+            raise ValueError('every view needs valid content')
         q=self.view_adapter(views.reshape(b*v,l,n,c),valid.reshape(b*v,n)).reshape(b,v,n,-1)
         d=q.shape[-1]
         geo=self.geometry(geometry)
@@ -78,6 +77,17 @@ class DenseSearchHead(nn.Module):
         # Exact full-image duplicate tiles retain the same representation as full.
         local=(geometry[:,:,:4]-geometry[:,0:1,:4]).abs().sum(-1)>1e-7
         q=q+self.global_context(full)[:,None,None,:]*local[:,:,None,None]
+        return q, geo
+
+    def forward(self,reference,reference_valid,views,view_valid,geometry,indices,weights,
+                priors,view_weights,camera_state,camera_valid):
+        b,v,l,n,c=views.shape
+        valid=view_valid.bool()
+        if (priors<=0).any() or (view_weights<=0).any():
+            raise ValueError('positive fusion weights required')
+        r,rvalid,description=self._reference(reference,reference_valid.bool())
+        q,geo=self.encode_views(views,view_valid,geometry)
+        d=q.shape[-1]
         projected_q=F.normalize(self.correlation_query(q),dim=-1)
         projected_r=F.normalize(self.correlation_reference(r),dim=-1)
         similarity=torch.einsum('bvnd,bmd->bvnm',projected_q,projected_r)
