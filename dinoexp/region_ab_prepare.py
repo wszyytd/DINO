@@ -22,6 +22,8 @@ def cuda_device(name):
     device = torch.device(name)
     if device.type != 'cuda' or not torch.cuda.is_available():
         raise RuntimeError('This experiment requires an authorized CUDA server; no CPU fallback')
+    if device.index is None:
+        device = torch.device('cuda', torch.cuda.current_device())
     torch.cuda.set_device(device)
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False

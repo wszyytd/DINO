@@ -18,7 +18,9 @@
 |旧缓存|`memory_fullview_cache_server_v1` 本机不存在；旧 GT 掩码池化缓存不能复用为本轮矩形区域特征|
 |旧实验|memory_e200 本机目录存在；数字不进入本轮 A/B 直接比较表|
 
-服务器目录和 conda 环境沿用交接约定，尚未远程核实。服务器命令会现场检查 CUDA、输入文件、源码和真实权重；缺失就停止，不下载替代权重、不退回 CPU。
+用户返回的终端日志已确认服务器目录 `/mnt/fast18/sunbo/DINO` 和 `dino-probe` 环境；本机会话没有登录远端。服务器命令会现场检查 CUDA、输入文件、源码和真实权重；缺失就停止，不下载替代权重、不退回 CPU。
+
+服务器首次运行反馈的 `Expected a torch.device with a specified index ... got:cuda` 已定位为设备初始化遗漏编号：`cuda` 现在先解析为当前逻辑GPU编号，再调用 `set_device`；`cuda:0` 等明确编号保持不变，也遵循 `CUDA_VISIBLE_DEVICES` 的逻辑编号。此次报错发生在加载网络、创建实验输出目录之前，不需要更换 conda 环境。4项模拟设备回归检查已通过，没有本机CUDA或网络计算。
 
 ## 数据流
 
@@ -114,6 +116,7 @@ export CUBLAS_WORKSPACE_CONFIG=:4096:8
 python -m unittest discover -s tests -p test_region_geometry.py
 python -m unittest discover -s tests -p test_region_metrics.py
 python -m unittest discover -s tests -p test_region_data.py
+python -m unittest discover -s tests -p test_region_device.py
 python -m unittest discover -s tests -p test_region_server.py
 
 mkdir -p out
@@ -173,6 +176,7 @@ HTML 不依赖服务器或外部脚本。下载时保留 `report/assets`，然�
 |`tests/test_region_geometry.py`|纯几何、补边、空框、合并、多正和歧义|
 |`tests/test_region_metrics.py`|漏检Null分离、失败保留分母、配对汇总|
 |`tests/test_region_data.py`|共享A/B来源检查、拒绝标签/候选不一致|
+|`tests/test_region_device.py`|模拟CUDA接口，检查默认/明确设备编号与禁止CPU回退；无网络计算|
 |`tests/test_region_server.py`|仅服务器CUDA：前向/反向、排列等变、禁止老师分数/身份输入|
 
 ## 当前可得与不可得的结论
