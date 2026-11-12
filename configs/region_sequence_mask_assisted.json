@@ -1,0 +1,31 @@
+{
+  "proposal": {
+    "relative_peak": 0.3,
+    "uniform_multiple": 1.5,
+    "expansion": 1.5,
+    "min_side": 96,
+    "merge_iou": 0.3,
+    "merge_containment": 0.6,
+    "max_candidates": 8
+  },
+  "hints": {
+    "min_seed_pixels": 16,
+    "min_seed_fraction": 0.01,
+    "min_visible_pixels": 32,
+    "min_area_518": 196.0,
+    "padding_fraction": 0.04
+  },
+  "routes": {"length": 24, "stride": 8},
+  "training": {
+    "epochs": 100,
+    "seeds": [7, 17, 27],
+    "lr": 0.0001,
+    "batch_size": 4,
+    "weight_decay": 0.01,
+    "heads": 4,
+    "slots": 8,
+    "balance_classes": true
+  },
+  "exact_dedup": true,
+  "format_version": 1
+}

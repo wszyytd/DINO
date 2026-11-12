@@ -1,0 +1,31 @@
+{
+  "proposal": {
+    "relative_peak": 0.3,
+    "uniform_multiple": 1.5,
+    "expansion": 1.5,
+    "min_side": 96,
+    "merge_iou": 0.3,
+    "merge_containment": 0.6,
+    "max_candidates": 8
+  },
+  "label": {
+    "min_coverage": 0.5,
+    "min_pixels": 32,
+    "min_occupancy": 0.02,
+    "min_area_518": 196,
+    "secondary_pixels": 16,
+    "secondary_coverage": 0.1,
+    "secondary_occupancy": 0.02,
+    "giant_area_fraction": 0.5
+  },
+  "training": {
+    "seeds": [7, 17, 27],
+    "epochs": 100,
+    "lr": 0.0001,
+    "batch_size": 8,
+    "weight_decay": 0.01,
+    "heads": 4,
+    "slots": 8
+  },
+  "format_version": 1
+}
