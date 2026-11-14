@@ -1,0 +1,33 @@
+{
+  "seed": 7,
+  "lengths": [
+    4,
+    8
+  ],
+  "stride": 4,
+  "group_mode": "query_all",
+  "split_mode": "smoke_shared_identity",
+  "current_queries": 2,
+  "history_queries": 1,
+  "perturbations": {
+    "clean": 0.7,
+    "blur": 0.15,
+    "cover": 0.15
+  },
+  "repeat_probability": 0.25,
+  "history_weight": 1.0,
+  "repeat_weight": 0.1,
+  "heads": 4,
+  "slots": 8,
+  "batch_size": 4,
+  "lr": 0.0001,
+  "weight_decay": 0.01,
+  "clip": 1.0,
+  "seeds": [
+    7,
+    17,
+    27
+  ],
+  "smoke_updates": 200,
+  "full_updates": 2300
+}
