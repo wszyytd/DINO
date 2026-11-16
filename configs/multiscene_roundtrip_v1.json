@@ -1,0 +1,29 @@
+{
+  "map": "Town10HD_Opt",
+  "seed": 20261116,
+  "capture": {
+    "host": "127.0.0.1", "port": 2000, "timeout": 15,
+    "width": 1024, "height": 768, "fov": 70, "height_m": 8, "pitch_deg": -45,
+    "settle_ticks": 40,
+    "lens_attributes": {"lens_k": 0, "lens_kcube": 0},
+    "camera_attributes": {"exposure_mode": "histogram", "gamma": 2.2, "motion_blur_intensity": 0},
+    "weather": {"sun_altitude_angle": 60, "sun_azimuth_angle": 30, "cloudiness": 10,
+                "precipitation": 0, "wetness": 0, "fog_density": 0},
+    "reference": {"azimuth": 55, "elevation": 27, "distance": 8},
+    "candidates": [
+      {"identity": "A", "blueprint": "vehicle.dodge.charger", "color": "255,255,255"},
+      {"identity": "B", "blueprint": "vehicle.dodgecop.charger", "color": "255,255,255"}
+    ]
+  },
+  "minimum_vehicle_gap_m": 1.5,
+  "grid": {"size": 5, "spacing_m": 4, "move_speed": 2, "turn_speed": 90, "hold_s": 0.5},
+  "sampling": {
+    "backgrounds": 6, "train_backgrounds": 4, "layouts_per_background": 2,
+    "anchor_spawn_indices": null, "min_background_distance_m": 60,
+    "center_jitter_m": 2, "separation_m": [9, 11], "yaw_offset_deg": [-180, 180],
+    "max_attempts": 5, "max_anchor_tilt_deg": 8, "max_settled_tilt_deg": 12,
+    "max_vertical_shift_m": 1.5
+  },
+  "route": {"min_view_pixels": 8192, "min_outward": 10, "max_outward": 17,
+             "beam_width": 128, "max_routes": 1}
+}
