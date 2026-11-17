@@ -15,7 +15,7 @@ from .region_ab_prepare import FrozenRuntime, cuda_device
 from .region_sequence_training import advance
 
 
-def _load_checkpoints(source, methods, seeds):
+def load_checkpoints(source, methods, seeds):
     run = read_json(source / "training/run.json")
     if run["kind"] != "region_sequence_training_v1" or run["status"] != "complete":
         raise ValueError("source region-sequence training is incomplete")
@@ -39,7 +39,7 @@ def _load_checkpoints(source, methods, seeds):
     return checkpoints
 
 
-def _route_features(runtime, root, route):
+def encode_route_features(runtime, root, route):
     write_keys = {write["sample"] for step in route["steps"] for write in step["writes"].values()}
     writes, queries = {}, {}
     for key, sample in route["samples"].items():
@@ -73,7 +73,7 @@ def _item(kind, probe, step, **fields):
     return dict(kind=kind, probe=probe, anchor_step=step, **fields)
 
 
-def _evaluate_route(model, method, route, features, novelty):
+def evaluate_route(model, method, route, features, novelty, *, repeat=True, prewrite=False):
     writes, queries = features
     device = next(model.parameters()).device
     state = model.initial_state(1, 2, device, torch.float32)
@@ -116,14 +116,20 @@ def _evaluate_route(model, method, route, features, novelty):
                 skipped = state
             normal_scores = _read(model, state, queries, items, i)
             skip_scores = _read(model, skipped, queries, items, i) if write else normal_scores
+            prospective = next((item for item in items if item["kind"] == "new_view"), None)
+            pre_frame = (_read(model, before, queries, [prospective], i)[0]
+                         if prewrite and prospective and counts[i] else None)
             for item, normal, skip in zip(items, normal_scores, skip_scores, strict=True):
-                rows.append(dict(base, **item, before=skip, after=normal))
+                row = dict(base, **item, before=skip, after=normal)
+                if item is prospective and pre_frame is not None:
+                    row["before_frame"] = pre_frame
+                rows.append(row)
                 if item["kind"] == "self":
                     replay[i].append(_item("old_exact", item["probe"], t, origin=normal))
                 elif item["kind"] == "new_view" and all(p["probe"] != item["probe"] for p in replay[i]):
                     replay[i].append(_item("old_view", item["probe"], t, origin=normal))
 
-            if not write:
+            if not write or not repeat:
                 continue
             repeat_valid = torch.zeros_like(valid)
             repeat_valid[:, i] = valid[:, i]
@@ -175,6 +181,21 @@ def _markdown(summary, plan):
     return "\n".join(lines) + "\n"
 
 
+def frozen_runtime(args):
+    args.dense_cache = None
+    args.view_batch = 1
+    source = read_json(args.source_run / "plan.json")
+    runtime = FrozenRuntime(args)
+    backbone_hash = sha(runtime.backbone_path)
+    if (runtime.teacher_sha256 != source["teacher_sha256"] or backbone_hash != source["backbone_sha256"]
+            or runtime.cfg != source["teacher_feature_config"]):
+        raise ValueError("teacher/backbone do not match checkpoint training features")
+    from .evidence_query_data import verify_code_sources
+    verify_code_sources(Path(__file__).resolve().parents[1], source["code"])
+    verify_code_sources(runtime.repo, source["backbone_source"])
+    return runtime, source, backbone_hash
+
+
 @torch.inference_mode()
 def run(args):
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
@@ -187,23 +208,13 @@ def run(args):
     result_dir = args.output / "evaluation"
     if result_dir.exists():
         raise ValueError("evaluation already exists; preserve it and use a fresh plan directory")
-    checkpoints = _load_checkpoints(args.source_run, args.method, args.seed)
+    checkpoints = load_checkpoints(args.source_run, args.method, args.seed)
     device = cuda_device(args.device)
     torch.set_num_threads(args.threads)
-    args.dense_cache = None
-    args.view_batch = 1
-    source = read_json(args.source_run / "plan.json")
-    runtime = FrozenRuntime(args)
-    backbone_hash = sha(runtime.backbone_path)
-    if (runtime.teacher_sha256 != source["teacher_sha256"] or backbone_hash != source["backbone_sha256"]
-            or runtime.cfg != source["teacher_feature_config"]):
-        raise ValueError("teacher/backbone do not match checkpoint training features")
-    from .evidence_query_data import verify_code_sources
-    verify_code_sources(Path(__file__).resolve().parents[1], source["code"])
-    verify_code_sources(runtime.repo, source["backbone_source"])
+    runtime, source, backbone_hash = frozen_runtime(args)
     features = {}
     for route in plan["routes"]:
-        features[route["id"]] = _route_features(runtime, args.data, route)
+        features[route["id"]] = encode_route_features(runtime, args.data, route)
         print(f"Encoded {route['id']}", flush=True)
     del runtime
     result_dir.mkdir()
@@ -214,7 +225,7 @@ def run(args):
         model.load_state_dict(weights, strict=True)
         rows, writes = [], []
         for route in plan["routes"]:
-            readings, drift = _evaluate_route(model, method, route, features[route["id"]], plan["novelty_angle"])
+            readings, drift = evaluate_route(model, method, route, features[route["id"]], plan["novelty_angle"])
             rows.extend(readings)
             writes.extend(drift)
         name = f"{method}-s{seed}"
