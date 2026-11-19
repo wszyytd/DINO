@@ -2,6 +2,8 @@
 
 from collections import Counter
 
+VARIANTS = ("fixed", "replay", "replay_independent", "replay_prepost", "ema_prepost")
+
 
 def partition_routes(routes):
     train = [route for route in routes if route["split"] == "train"]
@@ -20,7 +22,7 @@ def partition_routes(routes):
 
 
 def build_schedule(route):
-    """Replay every accepted observation; independent queries read the pre-write state."""
+    """Only real observations write. Independent photos can read either state."""
     ids = route["identities"]
     if len(ids) != 2 or len(set(ids)) != 2:
         raise ValueError("expected two distinct candidates")
@@ -33,7 +35,7 @@ def build_schedule(route):
             raise ValueError("steps must be consecutive and chronological")
         if not step["writes"]:
             continue
-        writes, prewrite = [], []
+        writes, prewrite, postwrite = [], [], []
         for uid, observation in step["writes"].items():
             label = ids.index(uid)
             key = observation["sample"]
@@ -50,13 +52,14 @@ def build_schedule(route):
                 probe = samples[independent]
                 if probe["identity"] != uid or probe["rgb_sha256"] in write_rgb:
                     raise ValueError("independent query overlaps route writes or has the wrong identity")
+                postwrite.append((independent, label))
                 if label in seen:
                     prewrite.append((independent, label))
             writes.append((key, label))
         writes.sort(key=lambda pair: pair[1])
         seen.update(label for _, label in writes)
         replay.extend(writes)
-        schedule.append(dict(step=index, writes=writes, replay=list(replay), prewrite=prewrite,
+        schedule.append(dict(step=index, writes=writes, replay=list(replay), prewrite=prewrite, postwrite=postwrite,
                              fixed_labels=[label if label in seen else len(ids)
                                            for label in range(len(ids))]))
     if not schedule or len(seen) != len(ids):
@@ -69,9 +72,34 @@ def count_queries(schedules):
     for schedule in schedules:
         count["write_steps"] += len(schedule)
         for step in schedule:
-            for group in ("writes", "replay", "prewrite", "fixed_labels"):
+            for group in ("writes", "replay", "prewrite", "postwrite", "fixed_labels"):
                 count[group] += len(step[group])
     return dict(count)
+
+
+def paired_independent_scores(rows):
+    """Compare exactly the same independent queries before/after the whole frame."""
+    def counts(group):
+        return dict(total=len(group), pre_correct=sum(pre for pre, _ in group),
+                    post_correct=sum(post for _, post in group),
+                    help=sum(post and not pre for pre, post in group),
+                    harm=sum(pre and not post for pre, post in group))
+
+    by_candidate = {}
+    for row in rows:
+        pre = row.get("before_frame", {})
+        if row["kind"] != "new_view" or pre.get("margin") is None or row["after"]["margin"] is None:
+            continue
+        candidate = row["identity"].rsplit(":", 1)[-1]
+        by_candidate.setdefault(candidate, []).append(
+            (pre["decision"] == "target", row["after"]["decision"] == "target"))
+    result = counts([pair for group in by_candidate.values() for pair in group])
+    grouped = {candidate: counts(group) for candidate, group in by_candidate.items()}
+    result["by_candidate"] = grouped
+    result["balanced_post_accuracy"] = (
+        sum(g["post_correct"] / g["total"] for g in grouped.values()) / 2
+        if len(grouped) == 2 else None)
+    return result
 
 
 def audit_plan(plan, dataset_hash):

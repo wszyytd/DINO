@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from dinoexp.memory_replay import audit_plan
+from dinoexp.memory_replay import VARIANTS, audit_plan
 from dinoexp.region_ab_data import read_json, sha
 
 
@@ -17,8 +17,14 @@ def main():
         command.add_argument("--plan", type=Path, required=True, help="memory retention plan.json")
         command.add_argument("--data", type=Path, default=Path("data/multiscene_roundtrip_20261116_v1"))
     train.add_argument("--output", type=Path, required=True)
-    train.add_argument("--variant", nargs="+", choices=("fixed", "replay", "replay_independent"),
+    train.add_argument("--variant", nargs="+", choices=VARIANTS,
                        default=["fixed", "replay", "replay_independent"])
+    train.add_argument("--crop-mode", choices=("bbox", "foreground"), default="bbox",
+                       help="use the original RGB rectangle or black out non-instance pixels")
+    train.add_argument("--postwrite-weight", type=float, default=1.,
+                       help="independent post-write CE weight for both prepost variants")
+    train.add_argument("--ema-decay", type=float, default=.8,
+                       help="weight of the previous Writer slot in the fixed EMA control")
     train.add_argument("--source-run", type=Path, default=Path("out/region_sequence_mask_20261112_152736"))
     train.add_argument("--teacher", type=Path, default=Path("out/teacher_grid_fit_e20_retry/last.pt"))
     train.add_argument("--model-repo")

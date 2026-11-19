@@ -178,14 +178,27 @@ def build_plan(root, split, allow_incomplete, min_pixels, max_gap, novelty_gap):
                 routes=routes, excluded=excluded, coverage=coverage)
 
 
-def open_crop(root, sample):
+def open_crop(root, sample, *, foreground=False):
     path = checked_path(root, sample["image"])
     if sha(path) != sample["rgb_sha256"]:
         raise ValueError(f"RGB changed after plan: {sample['image']}")
     with Image.open(path) as image:
         if list(image.size) != sample["size"]:
             raise ValueError(f"RGB size mismatch: {sample['image']}")
-        return image.convert("RGB").crop(sample["bbox"])
+        crop = image.convert("RGB").crop(sample["bbox"])
+    if not foreground:
+        return crop
+    record = sample["mask"]
+    mask_path = checked_path(root, record["path"])
+    if sha(mask_path) != record["sha256"]:
+        raise ValueError(f"instance mask changed after plan: {record['path']}")
+    with Image.open(mask_path) as mask:
+        if list(mask.size) != sample["size"] or mask.mode not in ("1", "L"):
+            raise ValueError(f"invalid instance mask dimensions or mode: {record['path']}")
+        keep = mask.crop(sample["bbox"]).convert("L").point(lambda p: 255 if p else 0)
+    if not keep.getbbox():
+        raise ValueError(f"empty instance mask inside crop: {record['path']}")
+    return Image.composite(crop, Image.new("RGB", crop.size), keep)
 
 
 def score_pair(logits, seen, target):

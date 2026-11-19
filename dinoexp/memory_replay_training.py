@@ -1,4 +1,4 @@
-"""Fine-tune vehicle memory on every observed crop and independent pre-write queries."""
+"""Compare vehicle memory updates on replayed crops and independent photos."""
 
 import math
 import os
@@ -11,17 +11,16 @@ from torch.nn import functional as F
 from .core import checked_path
 from .evidence_memory import EvidenceMatcher
 from .evidence_query_prepare import encode_crop
-from .memory_replay import audit_plan
-from .memory_retention import summarize
+from .memory_replay import audit_plan, paired_independent_scores
+from .memory_retention import open_crop, summarize
 from .memory_retention_eval import encode_route_features, evaluate_route, frozen_runtime, load_checkpoints
 from .region_ab_data import read_json, sha, write_json
 from .region_ab_prepare import cuda_device
 from .region_sequence_training import advance
+from .replay_matcher import initialize_slot_ema
 
-VARIANTS = ("fixed", "replay", "replay_independent")
 
-
-def _fixed_features(runtime, root, train, manifest):
+def _fixed_features(runtime, root, train, manifest, *, foreground=False):
     cases = {case["scene_id"]: case for case in manifest["cases"]}
     route_features = {}
     for route in train:
@@ -36,8 +35,17 @@ def _fixed_features(runtime, root, train, manifest):
             path = checked_path(root, relative)
             if record["target_uid"] != uid or sha(path) != record["hashes"][relative]:
                 raise ValueError(f"fixed reference provenance mismatch: {path}")
-            with Image.open(path) as image:
-                tokens, valid = encode_crop(runtime, image.convert("RGB"), "queries")
+            if foreground:
+                rgb = record["audit"]["rgb"]
+                photo, mask = record["full"], record["mask"]
+                sample = dict(image=photo, rgb_sha256=record["hashes"][photo],
+                              size=[rgb["width"], rgb["height"]], bbox=record["crop_xyxy"],
+                              mask=dict(path=mask, sha256=record["hashes"][mask]))
+                crop = open_crop(root, sample, foreground=True)
+            else:
+                with Image.open(path) as image:
+                    crop = image.convert("RGB")
+            tokens, valid = encode_crop(runtime, crop, "queries")
             if tokens.shape != (64, 256) or valid.shape != (64,) or not valid.any():
                 raise ValueError(f"invalid fixed reference features: {path}")
             queries[label] = runtime.tensor(tokens), runtime.tensor(valid)
@@ -54,27 +62,36 @@ def _query_loss(model, state, cache, items):
     return F.cross_entropy(logits, targets)
 
 
-def route_loss(model, schedule, features, fixed, variant, independent_weight):
+def route_objective(model, schedule, features, fixed, variant, independent_weight, postwrite_weight):
     """Keep the memory graph connected across all writes within a route."""
     writes, queries = features
     state = model.initial_state(1, 2, next(model.parameters()).device, torch.float32)
     device = state["slots"].device
-    main_losses, independent_losses = [], []
+    main_losses, pre_losses, post_losses = [], [], []
+    supervise_post = variant in ("replay_prepost", "ema_prepost")
     for step in schedule:
-        if variant == "replay_independent" and step["prewrite"]:
-            independent_losses.append(_query_loss(model, state, queries, step["prewrite"]))
+        if (supervise_post or variant == "replay_independent") and step["prewrite"]:
+            pre_losses.append(_query_loss(model, state, queries, step["prewrite"]))
         observation = torch.zeros((1, 2, 16, 256), device=device)
         valid = torch.zeros((1, 2, 16), dtype=torch.bool, device=device)
         for key, label in step["writes"]:
             observation[0, label], valid[0, label] = writes[key]
         state = advance(model, "memory", observation, valid, state)
+        if supervise_post and step["postwrite"]:
+            post_losses.append(_query_loss(model, state, queries, step["postwrite"]))
         if variant == "fixed":
             main_losses.append(_query_loss(model, state, fixed, list(enumerate(step["fixed_labels"]))))
         else:
             main_losses.append(_query_loss(model, state, queries, step["replay"]))
     main = torch.stack(main_losses).mean()
-    independent = torch.stack(independent_losses).mean() if independent_losses else main.new_zeros(())
-    return main + independent_weight * independent, main, independent
+    pre = torch.stack(pre_losses).mean() if pre_losses else main.new_zeros(())
+    post = torch.stack(post_losses).mean() if post_losses else main.new_zeros(())
+    return main + independent_weight * pre + postwrite_weight * post, main, pre, post
+
+
+def route_loss(model, schedule, features, fixed, variant, independent_weight):
+    """Original three-value loss interface used by existing replay callers."""
+    return route_objective(model, schedule, features, fixed, variant, independent_weight, 1.)[:3]
 
 
 def _fit(model, variant, args, seed, train, schedules, features, fixed, folder):
@@ -85,16 +102,16 @@ def _fit(model, variant, args, seed, train, schedules, features, fixed, folder):
         model.train()
         order = list(train)
         random.Random(seed * 100_000 + epoch).shuffle(order)
-        sums = torch.zeros(3, device=next(model.parameters()).device)
+        sums = torch.zeros(4, device=next(model.parameters()).device)
         for offset in range(0, len(order), args.batch_routes):
             batch = order[offset:offset + args.batch_routes]
             optimizer.zero_grad(set_to_none=True)
             for route in batch:
                 key = route["id"]
-                total, main, independent = route_loss(model, schedules[key], features[key],
-                                                       fixed.get(key), variant, args.independent_weight)
-                (total / len(batch)).backward()
-                sums += torch.stack((total.detach(), main.detach(), independent.detach()))
+                terms = route_objective(model, schedules[key], features[key], fixed.get(key), variant,
+                                       args.independent_weight, args.postwrite_weight)
+                (terms[0] / len(batch)).backward()
+                sums += torch.stack([term.detach() for term in terms])
             gradient = torch.nn.utils.clip_grad_norm_(model.parameters(), 1., error_if_nonfinite=True)
             if not torch.isfinite(sums).all() or not torch.isfinite(gradient):
                 raise ValueError("nonfinite replay training loss or gradient")
@@ -102,7 +119,7 @@ def _fit(model, variant, args, seed, train, schedules, features, fixed, folder):
             updates += 1
         losses = (sums / len(order)).tolist()
         log.append(dict(epoch=epoch + 1, updates=updates, loss=losses[0],
-                        main_ce=losses[1], independent_ce=losses[2]))
+                        main_ce=losses[1], independent_ce=losses[2], independent_post_ce=losses[3]))
         write_json(folder / "train.json", log)
         if epoch == 0 or (epoch + 1) % 10 == 0 or epoch + 1 == args.epochs:
             print(f"{folder.name} epoch {epoch + 1}/{args.epochs}: loss={losses[0]:.5f}", flush=True)
@@ -113,7 +130,7 @@ def _metrics(rows):
     groups = summarize(rows)["val"]
     independent = [row for row in rows if row.get("before_frame", {}).get("margin") is not None]
     first = [row for row in rows if row["kind"] == "self" and row["prior_writes"] == 0]
-    return dict(groups=groups, independent_prewrite=dict(
+    return dict(groups=groups, paired_independent=paired_independent_scores(rows), independent_prewrite=dict(
         total=len(independent), correct=sum(r["before_frame"]["decision"] == "target" for r in independent)),
         first_exact=dict(total=len(first),
                          correct=sum(r["after"]["decision"] == "target" for r in first),
@@ -138,7 +155,7 @@ def _report(results):
     lines = ["# Vehicle memory replay",
              "",
              "Frozen initialization and all fine-tuned variants use identical held-out routes and queries.",
-             "Fine-tuning uses the final epoch. Independent pre-write uses both candidates already in memory.",
+             "Fine-tuning uses the final epoch. Reported pre-write accuracy requires both candidates in memory.",
              "",
              "| Model | First exact | Old exact correct | Initially right → later wrong | Independent pre-write | Independent post-write |",
              "| --- | ---: | ---: | ---: | ---: | ---: |"]
@@ -150,12 +167,26 @@ def _report(results):
         lines.append(f"| {name} | {first['correct']}/{first['total']} | {old['correct_after']}/{old['total']} | "
                      f"{old['later_wrong']}/{old['initially_correct']} | {pre['correct']}/{pre['total']} | "
                      f"{new['correct_after']}/{new['total']} |")
+    lines.extend(["", "Same independent photos before/after the entire frame; both candidates available.",
+                  "Old-view probes are separate photos from previously queried angles. Repeated reads count.",
+                  "", "| Model | Paired reads | Pre correct | Post correct | Help | Harm | Balanced post | Old-view correct |",
+                  "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"])
+    for name, metrics in results.items():
+        paired = metrics["paired_independent"]
+        balanced = paired["balanced_post_accuracy"]
+        balanced_text = "—" if balanced is None else f"{balanced:.1%}"
+        old_view = metrics["groups"].get("old_view", {})
+        lines.append(f"| {name} | {paired['total']} | {paired['pre_correct']} | {paired['post_correct']} | "
+                     f"{paired['help']} | {paired['harm']} | {balanced_text} | "
+                     f"{old_view.get('correct_after', 0)}/{old_view.get('total', 0)} |")
     return "\n".join(lines) + "\n"
 
 
 def run(args):
     if (min(args.epochs, args.batch_routes, args.threads) < 1 or not math.isfinite(args.lr)
             or args.lr <= 0 or not math.isfinite(args.weight_decay) or args.weight_decay < 0
+            or not 0 <= args.ema_decay <= 1 or not math.isfinite(args.postwrite_weight)
+            or args.postwrite_weight <= 0
             or not math.isfinite(args.independent_weight) or args.independent_weight <= 0):
         raise ValueError("invalid replay training hyperparameters")
     if args.output.exists():
@@ -173,13 +204,14 @@ def run(args):
     if any(capture_cases.get(r["scene"]) != (r["split"], r["group"]) for r in plan["routes"]):
         raise ValueError("route split/background differs from the capture manifest")
     variants = list(dict.fromkeys(args.variant))
+    foreground = args.crop_mode == "foreground"
     with torch.no_grad():
         runtime, source_plan, backbone_hash = frozen_runtime(args)
         features = {}
         for route in plan["routes"]:
-            features[route["id"]] = encode_route_features(runtime, args.data, route)
+            features[route["id"]] = encode_route_features(runtime, args.data, route, foreground=foreground)
             print(f"Encoded {route['id']}", flush=True)
-        fixed = _fixed_features(runtime, args.data, train, manifest) if "fixed" in variants else {}
+        fixed = _fixed_features(runtime, args.data, train, manifest, foreground=foreground) if "fixed" in variants else {}
     del runtime
     args.output.mkdir(parents=True)
     write_json(args.output / "plan.json", plan)
@@ -188,6 +220,7 @@ def run(args):
                 backbone_sha256=backbone_hash, coverage=coverage, excluded=plan["excluded"],
                 epochs=args.epochs, batch_routes=args.batch_routes, lr=args.lr,
                 independent_weight=args.independent_weight, weight_decay=args.weight_decay,
+                crop_mode=args.crop_mode, ema_decay=args.ema_decay, postwrite_weight=args.postwrite_weight,
                 source_checkpoints={r["seed"]: r["checkpoint_sha256"] for r, _, _ in sources},
                 variants=variants, results={})
     write_json(args.output / "summary.json", info)
@@ -197,12 +230,17 @@ def run(args):
             name = f"{variant}-s{seed}"
             folder = args.output / name
             folder.mkdir()
-            model = EvidenceMatcher(**model_config).to(device)
-            model.load_state_dict(weights, strict=True)
+            if variant == "ema_prepost":
+                model = initialize_slot_ema(model_config, weights, args.ema_decay).to(device)
+            else:
+                model = EvidenceMatcher(**model_config).to(device)
+                model.load_state_dict(weights, strict=True)
             if variant != "initial":
                 updates = _fit(model, variant, args, seed, train, schedules, features, fixed, folder)
                 torch.save(dict(kind="memory_replay_matcher_v1", variant=variant, seed=seed,
-                               config=model_config, model_state=model.state_dict(), updates=updates,
+                               config=model.config, model_state=model.state_dict(), updates=updates,
+                               crop_mode=args.crop_mode, postwrite_weight=args.postwrite_weight,
+                               independent_weight=args.independent_weight,
                                plan_sha256=plan_hash, source_checkpoint_sha256=record["checkpoint_sha256"]),
                            folder / "last.pt")
             result = _validate(model, val, features, plan["novelty_angle"])

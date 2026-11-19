@@ -39,11 +39,11 @@ def load_checkpoints(source, methods, seeds):
     return checkpoints
 
 
-def encode_route_features(runtime, root, route):
+def encode_route_features(runtime, root, route, *, foreground=False):
     write_keys = {write["sample"] for step in route["steps"] for write in step["writes"].values()}
     writes, queries = {}, {}
     for key, sample in route["samples"].items():
-        crop = open_crop(root, sample)
+        crop = open_crop(root, sample, foreground=foreground)
         for role, cache, count in (("observations", writes, 16), ("queries", queries, 64)):
             if role == "observations" and key not in write_keys:
                 continue
