@@ -9,15 +9,15 @@ import torch
 from torch.nn import functional as F
 
 from .core import checked_path
-from .evidence_memory import EvidenceMatcher
 from .evidence_query_prepare import encode_crop
-from .memory_replay import audit_plan, paired_independent_scores
+from .memory_replay import PREPOST_VARIANTS, audit_plan, paired_independent_scores
 from .memory_retention import open_crop, summarize
 from .memory_retention_eval import encode_route_features, evaluate_route, frozen_runtime, load_checkpoints
 from .region_ab_data import read_json, sha, write_json
 from .region_ab_prepare import cuda_device
 from .region_sequence_training import advance
-from .replay_matcher import initialize_slot_ema
+from .replay_matcher import build_replay_matcher, initialize_slot_ema
+from .writer_experiment import evaluate_writer, writer_report
 
 
 def _fixed_features(runtime, root, train, manifest, *, foreground=False):
@@ -68,7 +68,7 @@ def route_objective(model, schedule, features, fixed, variant, independent_weigh
     state = model.initial_state(1, 2, next(model.parameters()).device, torch.float32)
     device = state["slots"].device
     main_losses, pre_losses, post_losses = [], [], []
-    supervise_post = variant in ("replay_prepost", "ema_prepost")
+    supervise_post = variant in PREPOST_VARIANTS
     for step in schedule:
         if (supervise_post or variant == "replay_independent") and step["prewrite"]:
             pre_losses.append(_query_loss(model, state, queries, step["prewrite"]))
@@ -224,6 +224,7 @@ def run(args):
                 source_checkpoints={r["seed"]: r["checkpoint_sha256"] for r, _, _ in sources},
                 variants=variants, results={})
     write_json(args.output / "summary.json", info)
+    writer_diagnostics, validation_routes = {}, {}
     for record, model_config, weights in sources:
         seed = record["seed"]
         for variant in ("initial", *variants):
@@ -233,7 +234,10 @@ def run(args):
             if variant == "ema_prepost":
                 model = initialize_slot_ema(model_config, weights, args.ema_decay).to(device)
             else:
-                model = EvidenceMatcher(**model_config).to(device)
+                config = dict(model_config)
+                if variant == "competitive_prepost":
+                    config["writer_attention"] = "competitive"
+                model = build_replay_matcher(config).to(device)
                 model.load_state_dict(weights, strict=True)
             if variant != "initial":
                 updates = _fit(model, variant, args, seed, train, schedules, features, fixed, folder)
@@ -246,6 +250,12 @@ def run(args):
             result = _validate(model, val, features, plan["novelty_angle"])
             write_json(folder / "validation.json", result)
             info["results"][name] = result["aggregate"]
+            if "competitive_prepost" in variants:
+                writer_diagnostics[name] = evaluate_writer(model, val, features, plan, folder)
+                validation_routes[name] = result["by_route"]
+                info["writer_diagnostics"] = writer_diagnostics
+                (args.output / "writer_report.md").write_text(
+                    writer_report(writer_diagnostics, validation_routes), encoding="utf-8")
             write_json(args.output / "summary.json", info)
             del model
     if sha(args.plan) != plan_hash or sha(manifest_path) != plan["dataset_sha256"]:

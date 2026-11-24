@@ -2,6 +2,7 @@
 
 import torch
 
+from .competitive_writer import CompetitiveWriter
 from .evidence_memory import EvidenceMatcher
 
 
@@ -30,6 +31,13 @@ class SlotEMAMatcher(EvidenceMatcher):
 def build_replay_matcher(config):
     if config["mode"] == "ema":
         return SlotEMAMatcher(**{k: v for k, v in config.items() if k != "mode"})
+    if "writer_attention" in config:
+        if config["writer_attention"] != "competitive" or config["mode"] != "memory":
+            raise ValueError("unsupported replay Writer configuration")
+        model = EvidenceMatcher(**{k: v for k, v in config.items() if k != "writer_attention"})
+        model.writer = CompetitiveWriter(model.dim, model.writer.attention.num_heads)
+        model.config.update(writer_attention="competitive")
+        return model
     return EvidenceMatcher(**config)
 
 

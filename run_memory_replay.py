@@ -22,7 +22,7 @@ def main():
     train.add_argument("--crop-mode", choices=("bbox", "foreground"), default="bbox",
                        help="use the original RGB rectangle or black out non-instance pixels")
     train.add_argument("--postwrite-weight", type=float, default=1.,
-                       help="independent post-write CE weight for both prepost variants")
+                       help="independent post-write CE weight for prepost variants")
     train.add_argument("--ema-decay", type=float, default=.8,
                        help="weight of the previous Writer slot in the fixed EMA control")
     train.add_argument("--source-run", type=Path, default=Path("out/region_sequence_mask_20261112_152736"))

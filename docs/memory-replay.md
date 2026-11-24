@@ -54,3 +54,21 @@ cat "$OUT/report.md"
 三项损失各自先对单步查询、再对有该项监督的路线步平均。两个 prepost 组均使用历史回问、独立 pre、独立 post 三项，权重默认为 1、1、1。独立照片来自路线外，始终只查询。EMA 首次直接保存 Writer 的 8 个槽，之后使用旧槽 × 0.8 ＋ 新槽 × 0.2，无观察时保持旧状态。这里保留原 Reader 所需的槽向量尺度。EMA 的 Writer 和 Reader 仍参加相同监督下的微调，固定的是更新公式。两个系数可通过单独训练命令的 `--ema-decay` 和 `--postwrite-weight` 设置。
 
 脚本打印新建的 `out/foreground_memory_*` 目录。其 `bbox/report.md` 和 `foreground/report.md` 中第二张表比较双方车辆均已建档时，**同一张独立照片**在整帧写入前后的正确数、由错变对、由对变错，以及旧角度独立照片的保留情况。`paired_independent.by_candidate` 保留 A/B 分项；`groups.new_view.help/harm` 使用只跳过目标车本次写入的另一种干预。不同步数可重复查询同一张照片。每个组的 `last.pt` 记录模型配置及裁图模式，恢复时使用 `dinoexp.replay_matcher.build_replay_matcher(checkpoint["config"])`，再严格加载 `checkpoint["model_state"]`。
+
+## 实验八 · Writer 槽竞争
+
+服务器切到 `codex/evidence-memory-v1` 并更新后，在 `dino-probe` 环境运行：
+
+```bash
+bash run_experiment8.sh           # 30 轮，种子 7
+# bash run_experiment8.sh 1 7    # 流程检查
+# bash run_experiment8.sh 30 7 17 27
+```
+
+脚本复用实验七的留出路线、独立照片、前景裁剪和三项 prepost 损失。每个种子的普通 Writer（`replay_prepost`）和竞争 Writer（`competitive_prepost`）从同一来源检查点严格加载全部参数，按相同路线顺序各自微调。竞争版只在 Writer 的每个注意力头内沿槽做 softmax，排除无效输入，再对每个槽按有效输入权重求加权平均。首次写入照常由 Writer 初始化记忆，之后调用原 Updater 和门控。`initial` 是微调前的普通 Writer。
+
+打印的输出目录下，`report.md` 保留与实验七一致的指标。`writer_report.md` 另列每条路线的新查询、旧角度回问、独立旧查询数和遗忘次数。先看新、旧查询同时正确的数量以及旧查询从对变错的次数，再结合注意力和槽间余弦解释变化。不同种子、路线及重复回问分别解读。
+
+控制实验的 A、B 是同一辆车相隔较远的两个观察角度，具体方位随路线变化。每条留出路线每辆车最多选一对，依据方位和可用的非重复照片确定，不使用模型分数。沿用计划的角度阈值（默认近角 25°、远角 45°）。两张独立查询不参与写入，同一对象的所有历史共用同一份干扰车记忆。A、B 单图测首次识别；AB、BA 测顺序；matched-AA、BB、AB、BA 用同时具有两种单角度双图对照的同一批案例。AB 后最多再写三张不同的 B 角度照片，每次重问原来的 A、B 两张查询。覆盖不足的路线或长序列按实际例数报告。
+
+每组子目录的 `view_pairs.json` 保存选图、顺序、方位及逐题决策和分差。`writer_maps.json` 保存自然路线逐次写入的各头聚合权重、有效位、槽间余弦和逐槽实际更新范数，竞争组还保存第二次归一化前的分配权重。`writer_heatmaps.png` 显示每条路线第一个样本，横轴是连续索引的输入 token，纵轴是槽，灰格表示无效输入，蓝色越深聚合权重越大。各组用一致样本及色标。

@@ -2,7 +2,8 @@
 
 from collections import Counter
 
-VARIANTS = ("fixed", "replay", "replay_independent", "replay_prepost", "ema_prepost")
+PREPOST_VARIANTS = ("replay_prepost", "ema_prepost", "competitive_prepost")
+VARIANTS = ("fixed", "replay", "replay_independent", *PREPOST_VARIANTS)
 
 
 def partition_routes(routes):
