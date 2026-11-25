@@ -7,7 +7,6 @@ if (( $# > 0 )); then shift; fi
 seeds=("$@")
 if (( ${#seeds[@]} == 0 )); then seeds=(7); fi
 data=${CLEAR_MEMORY_DATA:-data/experiment8_clear_orbits_v1}
-capture_python=${CARLA_PYTHON:-python}
 export CUBLAS_WORKSPACE_CONFIG=${CUBLAS_WORKSPACE_CONFIG:-:4096:8}
 
 if [[ -n "${MEMORY_PLAN:-}" ]]; then
@@ -16,7 +15,12 @@ fi
 if [[ -f "$data/plan.json" ]]; then
     python -u capture_clear_memory.py audit --data "$data"
 else
-    "$capture_python" -u capture_clear_memory.py capture --data "$data" \
+    capture=( "${CARLA_PYTHON:-python}" )
+    if [[ -z "${CARLA_PYTHON:-}" ]] && ! python -c 'import carla' 2>/dev/null; then
+        capture=(conda run --no-capture-output -n carla10 python)
+    fi
+    echo "Capture interpreter: ${capture[*]}"
+    "${capture[@]}" -u capture_clear_memory.py capture --data "$data" \
         --host "${CARLA_HOST:-127.0.0.1}" --port "${CARLA_PORT:-2000}"
 fi
 python -m unittest discover -s tests -p test_writer_competition.py -v

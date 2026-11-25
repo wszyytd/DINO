@@ -69,7 +69,7 @@ bash run_experiment8.sh           # 30 轮，种子 7
 
 每张照片同步采 RGB 和真值实例掩膜。移走车后在原机位采空场深度，检查覆盖整车三维框投影和可见掩膜的矩形。矩形内所有像素的背景都须比车辆最远角点远至少 1 米，车身完整入框且至少有 8192 个前景像素。检查覆盖掩膜内部的洞。保存 RGB、掩膜、检查区域的 16 位深度图和相机位姿，深度单位为毫米，超过 65.535 米的值饱和。训练前逐张复核。验证集前景缩略图在 `data/experiment8_clear_orbits_v1/validation_foregrounds.jpg`，每行一辆车的四个方位，写入图与对应查询图左右成对，图下标有水平方位角。单个位置采集完成后保存进度。再次运行时会复用已完成的位置，完整数据通过复核后可直接重复训练。
 
-CARLA 与训练环境分开安装时，可设 `CARLA_PYTHON=/path/to/carla/env/bin/python`。连接其他端口或主机可设 `CARLA_PORT` 或 `CARLA_HOST`。也可以先用 `python capture_clear_memory.py capture` 单独采集，或用 `python capture_clear_memory.py audit` 复核。旧街景实验可按历史提交 `4537018` 复现。
+在 `dino-probe` 中运行脚本即可。首次采集时，当前 Python 如果缺少 `carla`，脚本会用已有的 `carla10` Conda 环境采集，随后用 `dino-probe` 训练。已采好的数据直接在训练环境复核。自定义采集解释器可设 `CARLA_PYTHON=/path/to/carla/env/bin/python`。连接其他端口或主机可设 `CARLA_PORT` 或 `CARLA_HOST`。单独采集用 `conda run --no-capture-output -n carla10 python -u capture_clear_memory.py capture`，单独复核用 `python capture_clear_memory.py audit`。旧街景实验可按历史提交 `4537018` 复现。
 
 每个种子的普通 Writer（`replay_prepost`）和竞争 Writer（`competitive_prepost`）共用原有 region-sequence 初始检查点、前景裁剪、同一组新序列和三项 prepost 损失。竞争版只在 Writer 的每个注意力头内沿槽做 softmax，排除无效输入，再对每个槽按有效输入权重求加权平均。首次写入照常由 Writer 初始化记忆，之后调用原 Updater 和门控。`initial` 是微调前的普通 Writer。
 
