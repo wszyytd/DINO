@@ -112,3 +112,19 @@ python run_experiment8_followup.py out/experiment8_offline_20261125_091046_37t0g
 新结果在原运行目录下单独的 `followup_*` 文件夹。`cases.txt` 为原结果逐题复核，`report.txt` 包含对称实验按车型组合的分数与同题转对／转错计数，`questions.json` 含每题原图、翻转和平均的三类分数。`summary.json` 记录权重及数据版本、原结果重放一致数和汇总。身份正确率计入 Null；分数差为目标车分数减去另一辆车分数。若重放一致数低于 42/42，应先用 `saved_original` 和 `scores.original` 查明差异，再与旧报告比较。
 
 每组子目录的 `view_pairs.json` 保存选图、顺序、方位及逐题决策和分差。`writer_maps.json` 保存自然路线逐次写入的各头聚合权重、有效位、槽间余弦和逐槽实际更新范数，竞争组还保存第二次归一化前的分配权重。`writer_heatmaps.png` 显示每条路线第一个样本，横轴是连续索引的输入 token，纵轴是槽，灰格表示无效输入，蓝色越深聚合权重越大。各组用一致样本及色标。
+
+### 固定高度车辆抠图对照
+
+在服务器 DINO 仓库的 `dino-probe` 环境执行 `bash run_experiment8_cutouts.sh`。默认对照为 `out/experiment8_offline_20261125_091046_37t0gB/bbox`。若原运行放在别处，可将其 `bbox` 目录作为第一个参数。脚本在新的 `out/experiment8_cutouts_*` 目录运行，全程使用已有环绕照片。
+
+162 张照片的训练、验证、写入和查询都使用相应车辆的前景。原框大小、车辆位置及车身 RGB 均保留，掩膜外填黑。仓库随附二值掩膜和对应原图摘要，服务器直接读取。掩膜由已知车辆框、COCO Mask R-CNN ResNet-50 FPN V2 的汽车掩膜头和 GrabCut 边缘细化生成。检查六组原图和前景后，修整了 8 张白色 Charger 裁图上连着停车线或挡车器的边缘。掩膜是预测标注，车身上的阴影和反光仍保留。原图和实际写入、查询所用的前景并排放在 `data/<采集组>/cutouts.jpg`。
+
+实验沿用车辆框基线的起始权重、优化器、种子 7 和 30 轮训练，分别微调普通 Writer 与槽竞争 Writer。最后用普通 Writer 在相同的 36 张独立查询上逐题比较三种条件。
+
+| 条件 | 使用的记忆权重 | 写入和查询的输入 |
+| --- | --- | --- |
+| 原车辆框基线 | 原车辆框训练权重 | 原车辆框，读取原运行保存的逐题分数 |
+| 仅改变输入 | 同一份原车辆框权重 | 黑底车辆前景 |
+| 抠图训练和推理 | 同一起点，用黑底车辆前景重新训练 | 同一批黑底车辆前景 |
+
+主比较使用原始方向查询。水平镜像和分数平均另外报告。训练结果见 `foreground/report.md`，对称写入和三组配对结果见 `followup_*/report.txt`，每道题的分数见 `followup_*/cutout_comparison.json`。单独重跑推理可执行 `python run_experiment8_followup.py <新运行>/foreground --compare-bbox <旧运行>/bbox`。

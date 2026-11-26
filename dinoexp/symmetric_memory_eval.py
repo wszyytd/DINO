@@ -38,7 +38,7 @@ def check_angles(route, near, far):
             raise ValueError(f"front/rear views closer than {far} degrees: {uid}")
 
 
-def encode_inputs(runtime, root, route):
+def encode_inputs(runtime, root, route, *, foreground=False):
     keys = _camera_keys(route)
     writes = {keys[uid, c] for uid in route["identities"] for c in WRITE_CAMERAS}
     probes = {keys[uid, c] for uid in route["identities"] for c in PROBES}
@@ -54,7 +54,7 @@ def encode_inputs(runtime, root, route):
         x, mask = encode_crop(runtime, image, role)
         return runtime.tensor(x), runtime.tensor(mask)
     for key in sorted(writes | probes):
-        image = open_crop(root, route["samples"][key])
+        image = open_crop(root, route["samples"][key], foreground=foreground)
         if key in writes:
             obs[key] = encode(image, "observations")
         if key in probes:
