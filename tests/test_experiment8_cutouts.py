@@ -29,7 +29,7 @@ def test_mask_pack_is_bound_to_original_pixels_and_removed_background(tmp_path):
     records = {"scene:A/00": dict(mask=member, rgb_sha256=sample["rgb_sha256"],
                                    mask_sha256=hashlib.sha256(data.getvalue()).hexdigest())}
     with ZipFile(path, "w") as pack:
-        pack.writestr("index.json", json.dumps(dict(records=records)))
+        pack.writestr("index.json", json.dumps(dict(schema="automatic_vehicle_masks_v1", records=records)))
         pack.writestr(member, data.getvalue())
     attach_masks(root, plan, path)
     actual = open_crop(root, sample, foreground=True)
@@ -39,6 +39,14 @@ def test_mask_pack_is_bound_to_original_pixels_and_removed_background(tmp_path):
     sample["rgb_sha256"] = "other-photo"
     with pytest.raises(ValueError, match="RGB"):
         attach_masks(root, plan, path)
+
+
+def test_previous_mask_archives_are_rejected(tmp_path):
+    old = tmp_path / "previous.zip"
+    with ZipFile(old, "w") as pack:
+        pack.writestr("index.json", json.dumps(dict(records={}, method="reviewed edge trims")))
+    with pytest.raises(ValueError, match="automatic vehicle segmenter"):
+        attach_masks(tmp_path, {"routes": []}, old)
 
 
 def test_fixed_weight_and_retraining_results_are_paired_by_photo():

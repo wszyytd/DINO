@@ -117,7 +117,9 @@ python run_experiment8_followup.py out/experiment8_offline_20261125_091046_37t0g
 
 在服务器 DINO 仓库的 `dino-probe` 环境执行 `bash run_experiment8_cutouts.sh`。默认对照为 `out/experiment8_offline_20261125_091046_37t0gB/bbox`。若原运行放在别处，可将其 `bbox` 目录作为第一个参数。脚本在新的 `out/experiment8_cutouts_*` 目录运行，全程使用已有环绕照片。
 
-162 张照片的训练、验证、写入和查询都使用相应车辆的前景。原框大小、车辆位置及车身 RGB 均保留，掩膜外填黑。仓库随附二值掩膜和对应原图摘要，服务器直接读取。掩膜由已知车辆框、COCO Mask R-CNN ResNet-50 FPN V2 的汽车掩膜头和 GrabCut 边缘细化生成。检查六组原图和前景后，修整了 8 张白色 Charger 裁图上连着停车线或挡车器的边缘。掩膜是预测标注，车身上的阴影和反光仍保留。原图和实际写入、查询所用的前景并排放在 `data/<采集组>/cutouts.jpg`。
+服务器为全部 162 张原图自动生成掩膜。对每张照片都使用原采集记录的车辆框，通过 COCO Mask R-CNN ResNet-50 FPN V2 的汽车掩膜头预测前景，再用 GrabCut 细化边缘并取最大连通区域。写入与查询都保留掩膜内的原始车身 RGB，把框内其余像素设为黑色。`data/<采集组>/cutouts.jpg` 展示每张原裁图和实际输入，`data/dataset_manifest.json` 记录分割方法、权重和掩膜索引的 SHA-256。
+
+分割步骤使用 PyTorch、与其匹配的 torchvision（含检测算子）以及 OpenCV（`cv2`）。首次运行会从 PyTorch 官方地址下载 COCO 分割权重并校验完整 SHA-256。离线服务器可设置 `EXPERIMENT8_MASK_WEIGHTS=/实际路径/maskrcnn_resnet50_fpn_v2_coco-73cbd019.pth`。若分割依赖位于另一环境，可设置 `EXPERIMENT8_SEGMENT_PYTHON` 为该环境的 Python 路径，训练和评测仍使用当前的 `dino-probe` 环境。
 
 实验沿用车辆框基线的起始权重、优化器、种子 7 和 30 轮训练，分别微调普通 Writer 与槽竞争 Writer。最后用普通 Writer 在相同的 36 张独立查询上逐题比较三种条件。
 

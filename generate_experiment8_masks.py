@@ -1,4 +1,4 @@
-"""Optional regeneration of the reviewed-car masks. The server uses the shipped pack."""
+"""Generate automatic vehicle masks from the source images on the experiment machine."""
 
 import argparse
 import csv
@@ -11,31 +11,27 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import cv2
 import numpy as np
 import torch
-from PIL import Image, ImageDraw
-from torchvision.models.detection import maskrcnn_resnet50_fpn_v2
+from PIL import Image
+from torchvision.models.detection import MaskRCNN_ResNet50_FPN_V2_Weights, maskrcnn_resnet50_fpn_v2
 from torchvision.models.detection.roi_heads import paste_masks_in_image
 from torchvision.transforms.functional import to_tensor
 
+from dinoexp.region_ab_data import sha
 
-def trim_reviewed_boundary(mask, scene, sample):
-    # Parking lines/stops touch the white Charger's roof/trunk in these validation views.
-    # Boundary vertices were marked on a 400 x 290 display of the source RGB crop.
-    if scene not in ("pair0_location1_refA", "pair1_location1_refA") or not sample["identity"].endswith(":A"):
-        return mask
-    edges = {
-        13: [(184, 65), (218, 65), (243, 66), (258, 70), (270, 78)],
-        17: [(304, 83), (320, 91), (345, 96), (356, 101), (364, 114), (374, 132), (400, 132)],
-        20: [(168, 73), (185, 65), (207, 59), (234, 55), (248, 52), (271, 56),
-             (287, 60), (299, 59), (317, 54), (328, 54), (344, 65), (357, 79)],
-        21: [(218, 58), (239, 54), (256, 53), (277, 55), (289, 54), (305, 48),
-             (317, 46), (331, 50), (347, 58), (358, 65)],
-    }
-    edge = edges.get(sample["camera_index"])
-    if edge:
-        polygon = [(edge[0][0], 0), *edge, (edge[-1][0], 0)]
-        ImageDraw.Draw(mask).polygon([(round(x*mask.width/400), round(y*mask.height/290))
-                                      for x, y in polygon], fill=0)
-    return mask
+
+WEIGHTS_SHA256 = "73cbd0190fcbe3ba339921fbce2c3a0b6bb9126c9a133c85e43a2a8e060a109e"
+
+
+def resolve_weights(path):
+    if path is None:
+        url = MaskRCNN_ResNet50_FPN_V2_Weights.COCO_V1.url
+        path = Path(torch.hub.get_dir()) / "checkpoints" / url.rsplit("/", 1)[-1]
+        if not path.is_file():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            torch.hub.download_url_to_file(url, str(path), hash_prefix=WEIGHTS_SHA256)
+    if sha(path) != WEIGHTS_SHA256:
+        raise ValueError(f"incorrect COCO Mask R-CNN ResNet-50 FPN V2 weights: {path}")
+    return path
 
 
 @torch.inference_mode()
@@ -75,32 +71,30 @@ def segment(model, scene, box):
     return Image.fromarray(np.uint8(labels == largest)*255)
 
 
-def generate(args):
-    weights_hash = hashlib.sha256(args.weights.read_bytes()).hexdigest()
-    if not weights_hash.startswith("73cbd019"):
-        raise ValueError("expected torchvision COCO Mask R-CNN ResNet-50 FPN V2 weights")
-    plan = json.loads((args.reviewed / "plan.json").read_text(encoding="utf-8"))
-    torch.set_num_threads(args.threads)
+def generate(source, reviewed, output, weights=None, threads=4):
+    weights = resolve_weights(weights)
+    plan = json.loads((reviewed / "plan.json").read_text(encoding="utf-8"))
+    torch.set_num_threads(threads)
     cv2.setNumThreads(1)
     model = maskrcnn_resnet50_fpn_v2(weights=None, weights_backbone=None, min_size=448, max_size=768).eval()
-    model.load_state_dict(torch.load(args.weights, map_location="cpu", weights_only=True))
+    model.load_state_dict(torch.load(weights, map_location="cpu", weights_only=True))
     records = {}
-    with ZipFile(args.output, "x", compression=ZIP_DEFLATED) as pack:
+    with ZipFile(output, "x", compression=ZIP_DEFLATED) as pack:
         for route in plan["routes"]:
-            folder = args.source / route["scene"]
+            folder = source / route["scene"]
             with (folder / "metadata.csv").open(encoding="utf-8-sig", newline="") as stream:
                 rows = {r["crop"]: r for r in csv.DictReader(stream)}
             for key, sample in route["samples"].items():
                 row = rows[sample["source_crop"]]
                 box = json.loads(row["crop_box"])
-                path = args.reviewed / sample["image"]
+                path = reviewed / sample["image"]
                 if hashlib.sha256(path.read_bytes()).hexdigest() != sample["rgb_sha256"]:
                     raise ValueError(f"unexpected RGB bytes: {key}")
-                with Image.open(folder / row["image"]) as image, Image.open(path) as reviewed:
+                with Image.open(folder / row["image"]) as image, Image.open(path) as crop:
                     scene = image.convert("RGB")
-                    if scene.crop(box).tobytes() != reviewed.convert("RGB").tobytes():
+                    if scene.crop(box).tobytes() != crop.convert("RGB").tobytes():
                         raise ValueError(f"wrong crop coordinates: {key}")
-                    mask = trim_reviewed_boundary(segment(model, scene, box), route["scene"], sample)
+                    mask = segment(model, scene, box)
                 buf = BytesIO()
                 mask.save(buf, format="PNG")
                 member = sample["image"][:-4]+".mask.png"
@@ -108,16 +102,16 @@ def generate(args):
                 records[key] = dict(mask=member, rgb_sha256=sample["rgb_sha256"],
                                     mask_sha256=hashlib.sha256(buf.getvalue()).hexdigest())
             print(f"Segmented {route['id']}: {len(records)}", flush=True)
-        pack.writestr("index.json", json.dumps(dict(weights_sha256=weights_hash,
-                      method="torchvision Mask R-CNN ResNet50 FPN V2, known box/car class, GrabCut boundary, reviewed edge trims",
+        pack.writestr("index.json", json.dumps(dict(schema="automatic_vehicle_masks_v1", weights_sha256=WEIGHTS_SHA256,
+                      method="torchvision Mask R-CNN ResNet50 FPN V2, known box/car class, GrabCut boundary and largest component",
                       records=records), sort_keys=True, indent=2))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--weights", type=Path, required=True)
+    parser.add_argument("--weights", type=Path, help="use an existing official COCO weight file")
     parser.add_argument("--source", type=Path, default=Path("data/fixed_height_similar_20261104"))
     parser.add_argument("--reviewed", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--threads", type=int, default=4)
-    generate(parser.parse_args())
+    generate(**vars(parser.parse_args()))

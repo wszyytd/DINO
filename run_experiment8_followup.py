@@ -106,7 +106,8 @@ def run(args):
     manifest = read_json(data / "dataset_manifest.json")
     plan_path = data / "plan.json"
     plan = read_json(plan_path)
-    modes = {"fixed_height_reviewed_boxes_v1": "bbox", "fixed_height_reviewed_cutouts_v1": "foreground"}
+    modes = {"fixed_height_reviewed_boxes_v1": "bbox", "fixed_height_reviewed_cutouts_v1": "foreground",
+             "fixed_height_auto_cutouts_v1": "foreground"}
     if (manifest["schema"] not in modes or config["status"] != "complete"
             or config["crop_mode"] != modes[manifest["schema"]] or config["plan_sha256"] != sha(plan_path)
             or config["dataset_sha256"] != sha(data / "dataset_manifest.json")):

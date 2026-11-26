@@ -11,7 +11,11 @@ export CUBLAS_WORKSPACE_CONFIG=${CUBLAS_WORKSPACE_CONFIG:-:4096:8}
 mkdir -p out
 run_dir=$(mktemp -d "out/experiment8_cutouts_$(date +%Y%m%d_%H%M%S)_XXXXXX")
 echo "Cutout run: $run_dir"
-python -u prepare_experiment8_cutouts.py --output "$run_dir/data"
+mask_args=()
+if [[ -n ${EXPERIMENT8_MASK_WEIGHTS:-} ]]; then
+    mask_args+=(--weights "$EXPERIMENT8_MASK_WEIGHTS")
+fi
+"${EXPERIMENT8_SEGMENT_PYTHON:-python}" -u prepare_experiment8_cutouts.py --output "$run_dir/data" "${mask_args[@]}"
 python -u run_memory_replay.py train --data "$run_dir/data" --plan "$run_dir/data/plan.json" \
     --output "$run_dir/foreground" --crop-mode foreground --variant replay_prepost competitive_prepost \
     --device cuda:0 --epochs 30 --seed 7
