@@ -94,7 +94,7 @@ def route_loss(model, schedule, features, fixed, variant, independent_weight):
     return route_objective(model, schedule, features, fixed, variant, independent_weight, 1.)[:3]
 
 
-def _fit(model, variant, args, seed, train, schedules, features, fixed, folder):
+def _fit(model, variant, args, seed, train, schedules, features, fixed, folder, *, after_epoch=None):
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     log = []
     updates = 0
@@ -103,6 +103,7 @@ def _fit(model, variant, args, seed, train, schedules, features, fixed, folder):
         order = list(train)
         random.Random(seed * 100_000 + epoch).shuffle(order)
         sums = torch.zeros(4, device=next(model.parameters()).device)
+        by_route = {}
         for offset in range(0, len(order), args.batch_routes):
             batch = order[offset:offset + args.batch_routes]
             optimizer.zero_grad(set_to_none=True)
@@ -111,7 +112,10 @@ def _fit(model, variant, args, seed, train, schedules, features, fixed, folder):
                 terms = route_objective(model, schedules[key], features[key], fixed.get(key), variant,
                                        args.independent_weight, args.postwrite_weight)
                 (terms[0] / len(batch)).backward()
-                sums += torch.stack([term.detach() for term in terms])
+                detached = torch.stack([term.detach() for term in terms])
+                sums += detached
+                if after_epoch is not None:
+                    by_route[key] = detached
             gradient = torch.nn.utils.clip_grad_norm_(model.parameters(), 1., error_if_nonfinite=True)
             if not torch.isfinite(sums).all() or not torch.isfinite(gradient):
                 raise ValueError("nonfinite replay training loss or gradient")
@@ -120,7 +124,13 @@ def _fit(model, variant, args, seed, train, schedules, features, fixed, folder):
         losses = (sums / len(order)).tolist()
         log.append(dict(epoch=epoch + 1, updates=updates, loss=losses[0],
                         main_ce=losses[1], independent_ce=losses[2], independent_post_ce=losses[3]))
+        if after_epoch is not None:
+            fields = ("loss", "main_ce", "independent_ce", "independent_post_ce")
+            log[-1]["by_route"] = {key: dict(zip(fields, values.tolist(), strict=True))
+                                   for key, values in by_route.items()}
         write_json(folder / "train.json", log)
+        if after_epoch is not None:
+            after_epoch(model, log[-1])
         if epoch == 0 or (epoch + 1) % 10 == 0 or epoch + 1 == args.epochs:
             print(f"{folder.name} epoch {epoch + 1}/{args.epochs}: loss={losses[0]:.5f}", flush=True)
     return updates

@@ -130,3 +130,23 @@ python run_experiment8_followup.py out/experiment8_offline_20261125_091046_37t0g
 | 抠图训练和推理 | 同一起点，用黑底车辆前景重新训练 | 同一批黑底车辆前景 |
 
 主比较使用原始方向查询。水平镜像和分数平均另外报告。训练结果见 `foreground/report.md`，对称写入和三组配对结果见 `followup_*/report.txt`，每道题的分数见 `followup_*/cutout_comparison.json`。单独重跑推理可执行 `python run_experiment8_followup.py <新运行>/foreground --compare-bbox <旧运行>/bbox`。
+
+### 普通 Writer 从同一起点训练 100 轮
+
+在服务器 DINO 根目录激活 `dino-probe` 后运行：
+
+```bash
+python -u run_experiment8_long.py
+```
+
+默认输入是 `out/experiment8_cutouts_20261127_084108_Cmx6Mi` 里的自动抠图、训练配置和原第 30 轮验证记录。若移动过该目录，用 `--baseline <原运行根目录>` 指定。实验从原始 region-sequence 种子 7 检查点开始，只训练普通 Writer，全程使用同一个 AdamW 优化器，地点 42 用于训练，地点 64 用于验证。输出到新的 `out/experiment8_long_*`，开始时会打印确切路径。
+
+| 输出 | 读法 |
+| --- | --- |
+| `report.md`、`run.json` | 四个检查点共用的对照报告与完成进度。第 30 轮核对原来的 26/36、36 次逐题判定、三个候选分数的最大绝对差，以及原权重文件可用时的逐张量相等性。数值差异会如实记录，后续检查点继续运行。 |
+| `train.json` | 每轮按训练路线记录总损失、历史回问 CE、写前独立查询 CE、写后独立查询 CE。这里的数值来自该路线当时参与的优化批次。 |
+| `epoch_030`、`epoch_050`、`epoch_075`、`epoch_100` | 各自的 `last.pt` 是该轮普通 Writer 权重。`summary.json` 另存使用该轮同一份权重在三条训练路线上重算的损失，以及按组、写入顺序和查询方向汇总的成绩及分差。 |
+| 各轮的 `validation.json` | 自然路线的全部查询，含写后 36 题、能在写前写后配对的 30 题和旧视角回问。 |
+| 各轮的 `questions.json`、`gates.json` | 对称车头车尾实验的 24 题 × 2 种顺序，每题包含六种读法的原始分数（按该行 `candidates` 的顺序，再加 Null）、目标车减对手的分差、原方向判定及温度 1 的目标概率。每次第二写还记录每辆车的 8 个门值、每槽候选和最终更新相对旧槽的位移范数。 |
+
+FR 为先车头（机位 00）后车尾（12），RF 为反向。两车写入相同历史，查询机位 01、22、11、14。重点查看 `pair1`、`pair2` 的车头和车尾，表里 `previous` 单存第一张，`written` 单存第二张，`proposal` 是实际 Updater 的门控前输出，`updated` 是真实门控后的 8 槽。`score_mean` 对两次单存分别得到的 A、B、Null 三个分数逐项平均后判定。`gallery` 把两张独立写出的 8 槽拼成 16 槽，由同一个 Reader 打分。四个中间状态都使用同一个查询和 Reader，两辆候选车同步切换到对应状态。报告单列近色 Lincoln B 的 11、22 两题。可结合分差与门值判断变化出现在哪一步；单看某一步答错，还无法区分编码器、Writer 和 Reader 各自的贡献。

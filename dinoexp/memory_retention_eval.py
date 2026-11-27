@@ -39,8 +39,9 @@ def load_checkpoints(source, methods, seeds):
     return checkpoints
 
 
-def encode_route_features(runtime, root, route, *, foreground=False):
+def encode_route_features(runtime, root, route, *, foreground=False, extra_writes=()):
     write_keys = {write["sample"] for step in route["steps"] for write in step["writes"].values()}
+    write_keys.update(extra_writes)
     writes, queries = {}, {}
     for key, sample in route["samples"].items():
         crop = open_crop(root, sample, foreground=foreground)
