@@ -16,7 +16,7 @@ def report(epochs):
     lines = ["# 实验八四视角顺序写入", "",
              "两辆候选车同步写入 00 → 20 → 16 → 12。每步都问相同的 01、21、15、11 四个机位。",
              "updated 为递归 8 槽，written 为只存最新一张，score_mean 为已写各单图的三个分数逐项平均，"
-             "gallery 为分存所有已写图的槽并用同一 Reader 查询，四步分别保存 8、16、24、32 槽。",
+             "slot_mean 为同编号的槽逐张取平均（每车 8 槽），gallery 为分存所有已写图的槽并用同一 Reader 查询，四步分别保存 8、16、24、32 槽。",
              "旧方向和新方向栏均为与上一步相比的“改对 / 改错（题数）”。第 1 步没有可比的先前记忆。"
              "四列方向成绩包含尚未写入的方向。四面都对以车辆为分母。"]
     for epoch, summary in epochs.items():
@@ -33,19 +33,24 @@ def report(epochs):
     return "\n".join(lines) + "\n"
 
 
-def run(args):
-    import torch
-    from dinoexp.four_view_memory import encode_sequence, inspect_sequence, select_views, summarize
-    from dinoexp.memory_retention_eval import frozen_runtime
-
-    long_run = read_json(args.checkpoints / "run.json")
-    baseline = args.baseline or Path(long_run["baseline"])
+def experiment_source(checkpoints, baseline):
+    long_run = read_json(checkpoints / "run.json")
+    baseline = baseline or Path(long_run["baseline"])
     config, plan = read_reference(baseline)
     if (long_run["status"] != "complete" or long_run["variant"] != VARIANT or long_run["seed"] != SEED
             or long_run["completed_epochs"] != list(MILESTONES)
             or long_run["source_checkpoint_sha256"] != config["source_checkpoints"][str(SEED)]
             or any(long_run[k] != config[k] for k in ("plan_sha256", "dataset_sha256", "teacher_sha256", "backbone_sha256"))):
         raise ValueError("long-run checkpoints do not match the completed foreground experiment")
+    return baseline, config, plan
+
+
+def run(args):
+    import torch
+    from dinoexp.four_view_memory import encode_sequence, inspect_sequence, select_views, summarize
+    from dinoexp.memory_retention_eval import frozen_runtime
+
+    baseline, config, plan = experiment_source(args.checkpoints, args.baseline)
     _, routes, _, _ = audit_plan(plan, config["dataset_sha256"])
     selections = {r["id"]: select_views(r, plan["max_query_angle"]) for r in routes}
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")

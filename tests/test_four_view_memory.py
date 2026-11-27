@@ -37,6 +37,8 @@ class FourViewTests(unittest.TestCase):
         torch.manual_seed(12)
         torch.set_num_threads(1)
         model = EvidenceMatcher(dim=12, heads=3, slots=4).eval()
+        mean_model = EvidenceMatcher(dim=12, heads=3, slots=4, mode="mean").eval()
+        mean_model.load_state_dict({k: model.state_dict()[k] for k in mean_model.state_dict()}, strict=True)
         pairs = select_views(self.route, 25)
         def feature():
             return torch.randn(3, 12), torch.ones(3, dtype=torch.bool)
@@ -44,12 +46,13 @@ class FourViewTests(unittest.TestCase):
         queries = {p["query"]: feature() for p in pairs}
         rows, gates = inspect_sequence(model, self.route, pairs, obs, queries)
         self.assertEqual((len(rows), len(gates)), (32, 6))
-        state, singles = None, []
+        state, mean_state, singles = None, None, []
         with torch.inference_mode():
             for step, cam in enumerate((0, 20, 16, 12), 1):
                 frame = [obs[f"{uid}/{cam:02}"] for uid in self.route["identities"]]
                 x, valid = (torch.stack(items)[None] for items in zip(*frame, strict=True))
                 state = model.update(x, valid, state)
+                mean_state = mean_model.update(x, valid, mean_state)
                 singles.append(model.update(x, valid))
                 subset = [r for r in rows if r["step"] == step]
                 self.assertEqual({r["probe"] for r in subset}, set(queries))
@@ -57,7 +60,10 @@ class FourViewTests(unittest.TestCase):
                     q, m = queries[row["probe"]]
                     def read(s, query=q, mask=m):
                         return model.score(query[None], mask[None], s)[0]
+                    mean_slots = torch.stack([s["slots"] for s in singles]).mean(0)
+                    torch.testing.assert_close(mean_slots, mean_state["slots"])
                     expected = dict(updated=read(state), written=read(singles[-1]), gallery=read(gallery_state(singles)),
+                                    slot_mean=read(mean_state),
                                     score_mean=torch.stack([read(s) for s in singles]).mean(0))
                     for method, logits in expected.items():
                         torch.testing.assert_close(torch.tensor(row["scores"][method]["logits"]), logits,
@@ -67,6 +73,9 @@ class FourViewTests(unittest.TestCase):
         self.assertEqual([r["old_changes"]["n"] for r in summary], [0, 2, 4, 6])
         self.assertEqual([r["new_changes"]["n"] for r in summary], [0, 2, 2, 2])
         self.assertEqual([r["all_right_n"] for r in summary], [2]*4)
+        for row in rows:
+            del row["scores"]["slot_mean"]
+        self.assertEqual(summarize(rows), [r for r in stats if r["method"] != "slot_mean"])
 
     def test_server_entrypoint_writes_each_checkpoint_with_fake_features(self):
         from contextlib import redirect_stdout

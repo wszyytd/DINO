@@ -12,16 +12,16 @@ from .symmetric_memory_eval import _camera_keys, _write, gallery_state
 
 
 VIEWS = (("正车头", 0, 1), ("左前侧", 20, 21), ("左后侧", 16, 15), ("正车尾", 12, 11))
-CONTROLS = ("updated", "written", "score_mean", "gallery")
+CONTROLS = ("updated", "written", "slot_mean", "score_mean", "gallery")
 
 
-def select_views(route, max_gap):
+def select_views(route, max_gap, *, views=VIEWS, split="val"):
     keys, samples = _camera_keys(route), route["samples"]
-    if route["split"] != "val" or len(route["identities"]) != 2 or len(keys) != len(samples):
-        raise ValueError(f"expected two held-out candidates and unique camera IDs: {route['id']}")
+    if route["split"] != split or len(route["identities"]) != 2 or len(keys) != len(samples):
+        raise ValueError(f"expected two {split} candidates and unique camera IDs: {route['id']}")
     pairs = []
     for uid in route["identities"]:
-        for position, (name, w, q) in enumerate(VIEWS, 1):
+        for position, (name, w, q) in enumerate(views, 1):
             if (uid, w) not in keys or (uid, q) not in keys:
                 raise ValueError(f"missing four-view camera: {uid}, {w:02}/{q:02}")
             write, query = keys[uid, w], keys[uid, q]
@@ -79,7 +79,12 @@ def inspect_sequence(model, route, pairs, observations, queries):
                                   gate=trace["gate"][i].tolist()))
         singles.append(fresh)
         single_logits.append(read(fresh))
-        states.update(updated=memory, gallery=gallery_state(singles))
+        # Same running mean as EvidenceMatcher(mode="mean"); both cars are visible at every write.
+        if step == 1:
+            mean_slots = fresh["slots"]
+        else:
+            mean_slots = (mean_slots * (step - 1) + fresh["slots"]) / step
+        states.update(updated=memory, slot_mean=dict(memory, slots=mean_slots), gallery=gallery_state(singles))
         logits = {name: read(state) for name, state in states.items()}
         logits.update(written=single_logits[-1], score_mean=torch.stack(single_logits).mean(0))
         stacked = torch.stack(list(logits.values())).cpu()
@@ -97,6 +102,7 @@ def inspect_sequence(model, route, pairs, observations, queries):
 
 
 def summarize(rows):
+    methods = tuple(m for m in CONTROLS if m != "slot_mean" or (rows and m in rows[0]["scores"]))
     by_route = defaultdict(list)
     for r in rows:
         by_route[r["route"]].append(r)
@@ -109,7 +115,7 @@ def summarize(rows):
         index = {(r["step"], r["probe"]): r for r in items}
         for step in range(1, len(VIEWS)+1):
             subset = [r for r in items if r["step"] == step]
-            for method in CONTROLS:
+            for method in methods:
                 views, right = {}, defaultdict(list)
                 changes = {name: dict(n=0, helped=0, harmed=0) for name in ("old", "new")}
                 for pos, (name, _, _) in enumerate(VIEWS, 1):
