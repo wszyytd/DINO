@@ -31,19 +31,23 @@ def cache_route(model, route, pairs, observations, queries):
         if [p["identity"] for p in current] != ids:
             raise ValueError(f"candidate order differs between views: {route['id']}")
         frames.append(_write(model, [p["write"] for p in current], observations))
-    tokens, valid = (torch.stack(items) for items in zip(*(queries[p["query"]] for p in pairs), strict=True))
-    labels = torch.tensor([ids.index(p["identity"]) for p in pairs], device=tokens.device)
-    return dict(frames=frames, pairs=pairs, ids=ids, tokens=tokens, valid=valid, labels=labels, split=route["split"])
+    probes = [p for p in pairs if p["query"] is not None]
+    tokens, valid = (torch.stack(items) for items in zip(*(queries[p["query"]] for p in probes), strict=True))
+    labels = torch.tensor([ids.index(p["identity"]) for p in probes], device=tokens.device)
+    return dict(frames=frames, pairs=probes, ids=ids, tokens=tokens, valid=valid, labels=labels, split=route["split"])
 
 
-def subset_schedule(n_views, epochs, seed):
+def subset_schedule(n_views, epochs, seed, *, rear_views=()):
     """Cycle through all subsets at each length before repeating one."""
     rng = random.Random(seed)
+    rear = set(rear_views)
     by_size = []
     for size in (2, 3, 4):
         subsets = list(combinations(range(n_views), size))
+        if rear:
+            subsets = [subset for subset in subsets if rear.intersection(subset) and set(subset) - rear]
         if not subsets:
-            raise ValueError("gallery training requires at least four independent view pairs")
+            raise ValueError(f"no valid gallery subsets of size {size}")
         order = []
         while len(order) < epochs:
             rng.shuffle(subsets)

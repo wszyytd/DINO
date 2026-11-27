@@ -183,3 +183,21 @@ python -u run_experiment8_four_views.py && python -u train_experiment8_gallery.p
 每轮每条路线各用一个两图、三图、四图组合，同时考两辆车在组合内每个机位对应的独立查询。每种长度的组合打乱后轮流使用，默认 30 轮内同长度的每个组合出现次数相同。候选两车共享相同的机位集合。交叉熵监督车辆身份，模型只接收查询特征和槽特征。损失按三种长度等权平均，种子 7，AdamW 学习率 0.0001，权重衰减 0.01，batch_routes 为 2。三条路线每轮更新两次，默认共 60 次。第 100 轮权重的选择已参考地点 64 的早期结果，这轮在同一地点的比较属于探索性验证。
 
 在 `out/experiment8_gallery_reader_*/report.md` 分别查看训练前后 pair1、pair2 的四方向成绩。每车都查同样的 01、21、15、11，各组每条件 8 题。重点比较完整四图（32 槽）、同时从两辆车各去掉同一张后的四种条件（各 24 槽）、以及只存某一机位。`before_questions.json` 与 `after_questions.json` 记录每题每个条件的实际机位、A/B/Null 分数、判定和分差；抽去图片后的分差变化量为三图分差减四图分差。`train.json` 记录各轮选图、各路线损失和优化步数，`last.pt` 保存最终完整模型权重。
+
+### 补后半圈训练视角
+
+在服务器的 `dino-probe` 环境运行以下命令。分割的权重和流程与原抠图一致，候选图来自地点 42 原始记录。该步骤为 17 和 10 的各组六辆车生成原图／掩膜对照。可用 `--weights` 指定原权重文件，或在只准备 17 时加 `--skip-camera10`。
+
+```bash
+python -u prepare_experiment8_gallery_rear.py --output out/experiment8_gallery_rear_review
+```
+
+检查 `out/experiment8_gallery_rear_review/pair*_location0_refA/cutouts.jpg` 中的原图与抠图。三组车的机位 17 均符合原遮挡筛选要求后，用下列命令运行主实验。只有当机位 10 的两辆候选车在三条路线均通过检查时，才在训练命令末尾加 `--include-rear10`。
+
+```bash
+python -u train_experiment8_gallery.py --rear-review out/experiment8_gallery_rear_review
+```
+
+训练复用 16 和 11 的已有抠图写入记忆，16 配独立查询 17。默认 11 只提供车尾槽，加 `--include-rear10` 后用 10 查询车尾。2、3、4 图训练组合各含至少一张旧训练视角和至少一张后半圈视角，只用各组合内已配对的独立查询。Writer 从原第 100 轮权重加载并冻结，只有 Reader 和 match 有梯度。学习率和种子、每批 2 条路线、30 轮和 60 次参数更新均与首轮一致。
+
+结果写到 `out/experiment8_gallery_rear_*`。报告包含训练前、第 20、25 和最后一轮的地点 64 同题评测。比较 `prefix_4`、`single_12` 和 `drop_12` 的车尾成绩与分差，并结合 `drop_00`、`drop_16` 查看抽图对前后方向的影响。服务器报错或掩膜未通过检查时回到准备步骤，可为下一次准备指定新目录。

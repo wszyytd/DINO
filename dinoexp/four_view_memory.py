@@ -22,33 +22,44 @@ def select_views(route, max_gap, *, views=VIEWS, split="val"):
     pairs = []
     for uid in route["identities"]:
         for position, (name, w, q) in enumerate(views, 1):
-            if (uid, w) not in keys or (uid, q) not in keys:
-                raise ValueError(f"missing four-view camera: {uid}, {w:02}/{q:02}")
-            write, query = keys[uid, w], keys[uid, q]
-            a, b = samples[write], samples[query]
-            gap = angular_gap(a["azimuth"], b["azimuth"])
-            if not (0 < gap <= max_gap):
-                raise ValueError(f"invalid write/query angle: {write}, {query}, {gap}")
-            if not a.get("mask") or not b.get("mask"):
-                raise ValueError(f"missing vehicle mask: {write}, {query}")
+            if (uid, w) not in keys or (q is not None and (uid, q) not in keys):
+                raise ValueError(f"missing four-view camera: {uid}, {w}/{q}")
+            write = keys[uid, w]
+            query = keys[uid, q] if q is not None else None
+            a = samples[write]
+            query_angle = gap = None
+            if not a.get("mask"):
+                raise ValueError(f"missing vehicle mask: {write}")
+            if query is not None:
+                b = samples[query]
+                query_angle = b["azimuth"]
+                gap = angular_gap(a["azimuth"], query_angle)
+                if not (0 < gap <= max_gap):
+                    raise ValueError(f"invalid write/query angle: {write}, {query}, {gap}")
+                if not b.get("mask"):
+                    raise ValueError(f"missing vehicle mask: {query}")
+            elif split != "train":
+                raise ValueError("validation views require independent queries")
             pairs.append(dict(route=route["id"], identity=uid, view=name, position=position, write_camera=w,
                               query_camera=q, write=write, query=query, write_azimuth=a["azimuth"],
-                              query_azimuth=b["azimuth"], angle_gap=gap))
+                              query_azimuth=query_angle, angle_gap=gap))
     for field in ("frame", "rgb_sha256"):
         written = {samples[p["write"]][field] for p in pairs}
-        queried = {samples[p["query"]][field] for p in pairs}
+        queried = {samples[p["query"]][field] for p in pairs if p["query"] is not None}
         if written & queried:
             raise ValueError(f"four-view write/query overlap in {field}: {route['id']}")
     return pairs
 
 
-def encode_sequence(runtime, root, route, pairs):
+def encode_sequence(runtime, root, route, pairs, *, query_roots=None):
+    query_roots = query_roots or {}
+
     def encode(key, role):
-        crop = open_crop(root, route["samples"][key], foreground=True)
+        crop = open_crop(query_roots.get(key, root), route["samples"][key], foreground=True)
         features, mask = encode_crop(runtime, crop, role)
         return runtime.tensor(features), runtime.tensor(mask)
     return ({p["write"]: encode(p["write"], "observations") for p in pairs},
-            {p["query"]: encode(p["query"], "queries") for p in pairs})
+            {p["query"]: encode(p["query"], "queries") for p in pairs if p["query"] is not None})
 
 
 @torch.inference_mode()

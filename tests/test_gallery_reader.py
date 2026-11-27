@@ -38,6 +38,61 @@ class GalleryReaderTests(unittest.TestCase):
         self.model = EvidenceMatcher(dim=12, heads=3, slots=8)
         freeze_for_gallery(self.model)
 
+    def test_rear_context_has_no_query_and_all_subsets_mix_directions(self):
+        route, _, obs, queries = fixture("train")
+        views = (*TRAIN_VIEWS, ("rear", 16, 17), ("tail", 11, None))
+        for uid in route["identities"]:
+            for camera in (11, 16, 17):
+                key = f"{uid}/{camera:02}"
+                route["samples"][key] = dict(identity=uid, camera_index=camera, frame=str(camera),
+                    azimuth=camera*15, rgb_sha256=key, mask={"path": key})
+                bank = queries if camera == 17 else obs
+                bank[key] = torch.randn(4, 12), torch.ones(4, dtype=torch.bool)
+        pairs = select_views(route, 25, views=views, split="train")
+        cached = cache_route(self.model, route, pairs, obs, queries)
+        self.assertEqual(len(cached["frames"]), 7)
+        self.assertEqual(len(cached["pairs"]), 12)
+        self.assertEqual([p["write_camera"] for p in pairs if p["query"] is None], [11, 11])
+        subsets = subset_schedule(7, 30, 3, rear_views=(5, 6))
+        for row in subsets:
+            for subset in row:
+                self.assertTrue(any(i < 5 for i in subset) and any(i >= 5 for i in subset))
+        optimizer = torch.optim.AdamW([p for p in self.model.parameters() if p.requires_grad])
+        group = ((0, 6), (0, 5, 6), (0, 1, 5, 6))
+        seen = []
+        hook = self.model.reader.register_forward_pre_hook(lambda m, x: seen.append((x[0].shape[0], x[1].shape[1])))
+        try:
+            train_epoch(self.model, optimizer, {route["id"]: cached}, {route["id"]: group}, 7)
+        finally:
+            hook.remove()
+        self.assertEqual(seen, [(4, 16), (8, 24), (12, 32)])
+
+    def test_review_uses_camera10_only_when_enabled_and_rejects_validation_images(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from dinoexp.region_ab_data import write_json
+        from prepare_experiment8_gallery_rear import KIND, load_review
+
+        train, *_ = fixture("train")
+        val, *_ = fixture("val")
+        samples = {f"{uid}/{cam:02}": dict(identity=uid, camera_index=cam, role="query",
+                    rgb_sha256=f"rear {uid}/{cam:02}") for uid in train["identities"] for cam in (17, 10)}
+        review = dict(kind=KIND, base_plan_sha256="base", cameras=[17, 10],
+                      samples={train["id"]: samples})
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_json(root/"review.json", review)
+            for with_tail, expected in ((False, {17}), (True, {10, 17})):
+                routes, roots = load_review(root, "base", [train], [val], include_tail10=with_tail)
+                self.assertEqual(set(roots.values()), {root})
+                self.assertEqual({routes[0]["samples"][k]["camera_index"] for k in roots}, expected)
+                self.assertTrue(set(roots).isdisjoint(train["samples"]))
+            key = train["identities"][0] + "/17"
+            samples[key]["rgb_sha256"] = next(iter(val["samples"].values()))["rgb_sha256"]
+            write_json(root/"review.json", review)
+            with self.assertRaisesRegex(ValueError, "invalid or missing"):
+                load_review(root, "base", [train], [val])
+
     def test_training_reads_only_included_views_and_only_reader_and_match_change(self):
         route, pairs, obs, queries = fixture("train")
         cached = cache_route(self.model, route, pairs, obs, queries)

@@ -7,6 +7,7 @@ from tempfile import mkdtemp
 
 from dinoexp.memory_replay import audit_plan
 from dinoexp.region_ab_data import sha, write_json
+from prepare_experiment8_gallery_rear import load_review
 from run_experiment8_followup import load_writer
 from run_experiment8_four_views import experiment_source
 from run_experiment8_long import SEED
@@ -21,10 +22,19 @@ def run(args):
 
     if args.epochs < 1:
         raise ValueError("epochs must be positive")
+    rear_review = getattr(args, "rear_review", None)
+    tail_query = getattr(args, "include_rear10", False)
+    if tail_query and rear_review is None:
+        raise ValueError("--include-rear10 requires --rear-review")
     baseline, config, plan = experiment_source(args.checkpoints, args.baseline)
     train, val, _, _ = audit_plan(plan, config["dataset_sha256"])
+    train_views, supplemental, rear_positions = TRAIN_VIEWS, {}, ()
+    if rear_review is not None:
+        train, supplemental = load_review(rear_review, config["plan_sha256"], train, val, include_tail10=tail_query)
+        train_views = (*TRAIN_VIEWS, ("cam16", 16, 17), ("cam11", 11, 10 if tail_query else None))
+        rear_positions = tuple(range(len(TRAIN_VIEWS), len(train_views)))
     selections = {}
-    for routes, split, group, views in ((train, "train", "spawn-42", TRAIN_VIEWS), (val, "val", "spawn-64", VIEWS)):
+    for routes, split, group, views in ((train, "train", "spawn-42", train_views), (val, "val", "spawn-64", VIEWS)):
         for route in routes:
             if route["group"] != group:
                 raise ValueError(f"unexpected {split} location: {route['group']}")
@@ -41,7 +51,8 @@ def run(args):
     freeze_for_gallery(model)
     if args.output is None:
         Path("out").mkdir(exist_ok=True)
-        output = Path(mkdtemp(prefix="experiment8_gallery_reader_", dir="out"))
+        prefix = "experiment8_gallery_rear_" if rear_review is not None else "experiment8_gallery_reader_"
+        output = Path(mkdtemp(prefix=prefix, dir="out"))
     else:
         output = args.output
         output.mkdir(parents=True, exist_ok=False)
@@ -52,13 +63,19 @@ def run(args):
                 dataset_sha256=config["dataset_sha256"], teacher_sha256=config["teacher_sha256"], backbone_sha256=backbone,
                 epochs=args.epochs, batch_routes=2, lr=1e-4, weight_decay=.01, trainable=trainable,
                 selections=selections, train_routes=[r["id"] for r in train], val_routes=[r["id"] for r in val])
+    if rear_review is not None:
+        info.update(rear_review=str(rear_review), rear_review_sha256=sha(rear_review / "review.json"),
+                    rear_query_cameras=[17, 10] if tail_query else [17],
+                    write_only_cameras=[] if tail_query else [11],
+                    sampled_histories="at least one front and one rear write per subset")
     write_json(output/"run.json", info)
     caches = {}
     with torch.no_grad():
         for route in [*train, *val]:
             rid = route["id"]
             pairs = selections[rid]
-            features = encode_sequence(runtime, baseline/"data", route, pairs)
+            options = {"query_roots": supplemental} if rear_review is not None else {}
+            features = encode_sequence(runtime, baseline/"data", route, pairs, **options)
             caches[rid] = cache_route(model, route, pairs, *features)
     del runtime
     training = {r["id"]: caches[r["id"]] for r in train}
@@ -72,7 +89,7 @@ def run(args):
 
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad],
                                   lr=info["lr"], weight_decay=info["weight_decay"])
-    schedules = {rid: subset_schedule(len(TRAIN_VIEWS), args.epochs, SEED*1000+i)
+    schedules = {rid: subset_schedule(len(train_views), args.epochs, SEED*1000+i, rear_views=rear_positions)
                  for i, rid in enumerate(sorted(training))}
     logs = []
     updates = 0
@@ -80,17 +97,22 @@ def run(args):
         subsets = {rid: schedule[epoch] for rid, schedule in schedules.items()}
         stats = train_epoch(model, optimizer, training, subsets, SEED*100_000+epoch)
         updates += stats["updates"]
-        histories = {rid: [[TRAIN_VIEWS[i][1] for i in subset] for subset in groups]
+        histories = {rid: [[train_views[i][1] for i in subset] for subset in groups]
                      for rid, groups in subsets.items()}
         logs.append(dict(**stats, epoch=epoch+1, total_updates=updates, write_cameras=histories))
         write_json(output/"train.json", logs)
+        if rear_review is not None and epoch + 1 in (20, 25) and epoch + 1 < args.epochs:
+            stage = f"epoch_{epoch+1:03}"
+            stages[stage] = save_stage(stage)
+            (output/"report.md").write_text(report(stages), encoding="utf-8")
         if epoch == 0 or (epoch+1) % 10 == 0 or epoch+1 == args.epochs:
             print(f"Reader epoch {epoch+1}/{args.epochs}, updates {updates}, CE {stats['mean_ce']:.4f}", flush=True)
 
     stages["after"] = save_stage("after")
     torch.save(dict(kind="experiment8_gallery_reader_v1", config=model.config, model_state=model.state_dict(),
                     seed=SEED, source_checkpoint_sha256=info["source_checkpoint_sha256"],
-                    plan_sha256=info["plan_sha256"], epoch=args.epochs, updates=updates), output/"last.pt")
+                    plan_sha256=info["plan_sha256"], epoch=args.epochs, updates=updates,
+                    rear_review_sha256=info.get("rear_review_sha256")), output/"last.pt")
     (output/"report.md").write_text(report(stages), encoding="utf-8")
     info.update(status="complete", updates=updates)
     write_json(output/"run.json", info)
@@ -98,7 +120,7 @@ def run(args):
         rid = route["id"]
         hits = [sum(r["conditions"]["prefix_4"]["decision"] == "target" for r in rows if r["route"] == rid)
                 for rows in stages.values()]
-        print(f"{rid}: full gallery {hits[0]}/8 -> {hits[1]}/8", flush=True)
+        print(f"{rid}: full gallery {hits[0]}/8 -> {hits[-1]}/8", flush=True)
     print(f"Report: {output / 'report.md'}", flush=True)
     return output
 
@@ -109,6 +131,8 @@ if __name__ == "__main__":
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--output", type=Path, help="new directory")
     parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--rear-review", type=Path, help="use the reviewed training-only rear query supplement")
+    parser.add_argument("--include-rear10", action="store_true", help="use camera 10 only after both cars pass review")
     parser.add_argument("--source-run", type=Path, default=Path("out/region_sequence_mask_20261112_152736"))
     parser.add_argument("--teacher", type=Path, default=Path("out/teacher_grid_fit_e20_retry/last.pt"))
     parser.add_argument("--device", default="cuda:0")
