@@ -12,7 +12,7 @@ from .symmetric_memory_eval import HISTORIES, PROBES, _camera_keys, _write, gall
 METHODS = ("previous", "written", "proposal", "updated", "score_mean", "gallery")
 
 
-def _second_write(model, keys, observations, previous):
+def traced_write(model, keys, observations, previous):
     captured = {}
 
     def capture_updater(_module, inputs, output):
@@ -41,7 +41,7 @@ def inspect_route(model, route, features):
     for history in ("FR", "RF"):
         first, second = HISTORIES[history]
         previous = _write(model, [keys[uid, first] for uid in ids], observations)
-        updated, captured = _second_write(model, [keys[uid, second] for uid in ids], observations, previous)
+        updated, captured = traced_write(model, [keys[uid, second] for uid in ids], observations, previous)
         p = previous["slots"][0]
         w, u, g = (captured[k] for k in ("written", "proposal", "gate"))
         if w.shape != p.shape or u.shape != p.shape or g.shape != p.shape[:2]:

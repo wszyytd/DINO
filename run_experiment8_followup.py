@@ -50,12 +50,13 @@ def report(natural, symmetric, replay, contrasts):
     return "\n".join(lines) + "\n"
 
 
-def load_writer(folder, config, seed, device):
+def load_writer(folder, config, seed, device, *, epoch=None):
     import torch
     from dinoexp.replay_matcher import build_replay_matcher
 
     cp = torch.load(folder / "last.pt", map_location="cpu", weights_only=True)
     if (cp["kind"] != "memory_replay_matcher_v1" or cp["variant"] != "replay_prepost"
+            or (epoch is not None and cp.get("epoch") != epoch)
             or cp["seed"] != seed or cp["crop_mode"] != config["crop_mode"]
             or cp["plan_sha256"] != config["plan_sha256"]
             or cp["source_checkpoint_sha256"] != config["source_checkpoints"][str(seed)]):
