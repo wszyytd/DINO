@@ -91,6 +91,14 @@ def describe_write(runtime, root, sample, crop):
     return keys_from_sample(runtime, root, sample, raw)
 
 
+def angle_label(gap, max_duplicate_angle):
+    if 0 < gap <= max_duplicate_angle:
+        return "duplicate"
+    if gap >= 45:
+        return "novel"
+    return None
+
+
 @torch.inference_mode()
 def calibrate(runtime, root, routes, max_duplicate_angle):
     rows = []
@@ -104,11 +112,8 @@ def calibrate(runtime, root, routes, max_duplicate_angle):
             for i, j in combinations(range(len(samples)), 2):
                 a, b = samples[i], samples[j]
                 gap = angular_gap(a["azimuth"], b["azimuth"])
-                if 0 < gap <= max_duplicate_angle:
-                    kind = "duplicate"
-                elif gap >= 45:
-                    kind = "novel"
-                else:
+                kind = angle_label(gap, max_duplicate_angle)
+                if kind is None:
                     continue
                 rows.append(dict(route=route["id"], identity=uid, cameras=[a["camera_index"], b["camera_index"]],
                                  gap=gap, label=kind, similarity=similarity[i, j].item()))
@@ -138,19 +143,33 @@ def select_stream(route, max_gap):
     return writes, probes
 
 
+def encode_observation(runtime, root, model, sample, *, with_reference=False):
+    crop = open_crop(root, sample, foreground=True)
+    reference = None
+    if with_reference:
+        raw, _, q, q_valid = runtime.reference(crop, pixel_hash(crop))
+        keys = keys_from_sample(runtime, root, sample, raw[0])
+        reference = runtime.tensor(q), runtime.tensor(q_valid)
+    else:
+        keys = describe_write(runtime, root, sample, crop)
+    feature, valid = encode_crop(runtime, crop, "observations")
+    feature, valid = runtime.tensor(feature), runtime.tensor(valid)
+    slots = model.update(feature[None, None], valid[None, None])["slots"][0, 0]
+    cam = sample["camera_index"]
+    return (feature, valid, Prototype(cam, cam, keys, slots)), reference
+
+
 @torch.inference_mode()
-def encode_stream(runtime, root, model, route, writes, probes):
+def encode_stream(runtime, root, model, route, writes, probes, *, write_references=None):
     samples = route["samples"]
     evidence = {}
     for uid, views in writes.items():
         for cam, key in views.items():
-            sample = samples[key]
-            crop = open_crop(root, sample, foreground=True)
-            keys = describe_write(runtime, root, sample, crop)
-            feature, valid = encode_crop(runtime, crop, "observations")
-            feature, valid = runtime.tensor(feature), runtime.tensor(valid)
-            slots = model.update(feature[None, None], valid[None, None])["slots"][0, 0]
-            evidence[uid, cam] = (feature, valid, Prototype(cam, cam, keys, slots))
+            item, reference = encode_observation(runtime, root, model, samples[key],
+                                                 with_reference=write_references is not None)
+            evidence[uid, cam] = item
+            if write_references is not None:
+                write_references[uid, cam] = reference
     references, query_keys = [], []
     for p in probes:
         sample = samples[p["query"]]
@@ -215,7 +234,7 @@ def replay(model, route, probes, encoded, threshold):
     return rows, events
 
 
-def summarize(rows, events):
+def summarize(rows, events, *, methods=METHODS):
     """Compare fixed queries across steps and retain irreversible and recoverable errors."""
     summaries = []
     for route in sorted({r["route"] for r in rows}):
@@ -224,7 +243,7 @@ def summarize(rows, events):
             writes = [r["writes"] for r in events if (r["route"], r["sequence"]) == (route, name)]
             milestone = AFTER_FOUR_DIRECTIONS[name]
             final_step = max(r["step"] for r in selected)
-            for method in METHODS:
+            for method in methods:
                 def right(r, mode=method):
                     return r["scores"][mode]["decision"] == "target"
 
@@ -250,8 +269,15 @@ def report(summary, calibration):
              f"新视角 {calibration['novel_correct']}/{calibration['novel_n']}。",
              "A、B 交替各写一张，并分别选择自己的读取原型。后续每一步复问相同的四方向照片。",
              "repeat_after_four 在写过四个方向后追加同方向照片。rear_arrives_late 先连续看车头，再看两侧和车尾。",
-             "丢失按写过四个方向时答对的题计数，中途丢失包括最终恢复的题。", "",
-             "| 车辆组 | 序列 | 方法 | 四方向已写时 | 最终 | 正车头 | 左前侧 | 左后侧 | 正车尾 | 中途丢失 | 最终丢失 | 满仓拒收 |",
+             "丢失按写过四个方向时答对的题计数，中途丢失包括最终恢复的题。"]
+    lines.extend(retention_tables(summary))
+    lines.extend(["", "FIFO、去重和不限容量共享前景 4×4 硬路由。",
+                  "去重遇到低相似度且已满仓时拒收。完整的写入决策和每步逐题分数见 JSON。", ""])
+    return "\n".join(lines)
+
+
+def retention_tables(summary):
+    lines = ["", "| 车辆组 | 序列 | 方法 | 四方向已写时 | 最终 | 正车头 | 左前侧 | 左后侧 | 正车尾 | 中途丢失 | 最终丢失 | 满仓拒收 |",
              "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
     for r in summary:
         n, old = r["questions"], r["after_four"]
@@ -266,6 +292,4 @@ def report(summary, calibration):
         if r["late_tail_hits"] is not None:
             cells = [r["route"], r["method"], *(f"{c}/2" for c in r["late_tail_hits"])]
             lines.append("| " + " | ".join(cells) + " |")
-    lines.extend(["", "FIFO、去重和不限容量共享前景 4×4 硬路由。",
-                  "去重遇到低相似度且已满仓时拒收。完整的写入决策和每步逐题分数见 JSON。", ""])
-    return "\n".join(lines)
+    return lines
