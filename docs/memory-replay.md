@@ -213,3 +213,17 @@ python -u run_experiment8_view_routing.py
 使用原第 100 轮普通模型和地点 64 的 24 道四视角查询。写入图和查询图用相同的裁图预处理与冻结 DINOv2，取所用最深层的非填充 patch 特征平均并做 L2 归一化。每张查询对同机位两辆候选车的余弦相似度求平均。硬路由按最高平均相似度为两车共同选择一个机位，Reader 分别读取两辆车该机位各自的 8 槽。软路由使用温度 0.05，把每个机位独立获得的 A、B、Null 三个原始分数分别按共享权重求和。
 
 `out/experiment8_view_routing_*/report.md` 记录分组的方向命中、身份准确率、四图 gallery、固定单图和按已知同方向选图的诊断对照。抽走一张时从两车同时去掉该机位，然后重新路由。逐题的候选余弦、选择结果、权重和 Reader 分数在 `questions.json`。方向配对元数据用于验收与同方向单图对照。
+
+#### 前景池化与空间排列对照
+
+```bash
+python -u run_experiment8_view_routing.py --compare-pooling
+```
+
+这轮在一次编码和 Reader 打分中比较三种描述符。
+
+- `global_mean` 复用前一轮的非填充 patch 平均。
+- `foreground_mean` 根据现有实例掩膜计算每个 DINO patch 的前景覆盖率，并用覆盖率加权平均。只按掩膜计算前景面积，车身内的深色像素同样参与。
+- `foreground_grid` 把掩膜紧框映射到统一 4×4 网格，每格按其中的前景覆盖率池化和 L2 归一化。查询与记忆比较双方同时有前景的对应格，平等平均这些格子的余弦。若一对图没有共同有效格，使用该图对的 `foreground_mean` 相似度。
+
+三种描述符使用同一输入裁图、DINOv2 patch 特征及单机位 Reader 分数。掩膜作用在特征池化阶段。总报告在 `out/experiment8_view_pooling_*/report.md`，逐组列出四方向命中、身份变化和各写入机位的平均相似度。各方法子目录保留逐题 JSON 与抽图报告。

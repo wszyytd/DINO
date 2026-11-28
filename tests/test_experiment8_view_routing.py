@@ -5,11 +5,37 @@ if not importlib.util.find_spec("torch"):
     raise unittest.SkipTest("requires PyTorch")
 
 import torch
+from PIL import Image
 
-from dinoexp.experiment8_view_routing import CAMERAS, evaluate_routes, pool_view_key, report, route_logits, summarize
+from dinoexp.experiment8_view_routing import (
+    CAMERAS, POOLING, evaluate_routes, pool_view_key, pooling_report, report, route_logits, summarize,
+)
+from dinoexp.routing_foreground import foreground_keys, foreground_patch_weights, spatial_cosines
 
 
 class ViewRoutingTests(unittest.TestCase):
+    def test_foreground_weights_follow_letterbox_and_do_not_use_black_pixels_as_mask(self):
+        mask = Image.new("L", (28, 56))
+        mask.paste(255, (0, 0, 14, 28))
+        weights = foreground_patch_weights(mask, 56)
+        active = torch.tensor(weights.sum(0)).nonzero().flatten().tolist()
+        self.assertEqual(active, [1, 5])  # Four patch columns, one-column padding on the left.
+        raw = torch.full((16, 2), 1000.)
+        raw[1], raw[5] = torch.tensor([1., 0.]), torch.tensor([0., 1.])
+        keys = foreground_keys(raw, torch.tensor(weights))
+        self.assertEqual(keys["foreground_grid"].shape, (16, 2))
+        torch.testing.assert_close(keys["foreground_mean"], torch.tensor([2.**-.5, 2.**-.5]))
+        torch.testing.assert_close(keys["foreground_grid"][0], torch.tensor([1., 0.]))
+        torch.testing.assert_close(keys["foreground_grid"][12], torch.tensor([0., 1.]))
+
+    def test_spatial_cosine_uses_only_corresponding_occupied_cells(self):
+        probe = torch.tensor([[[1., 0.], [0., 1.], [0., 0.]]])
+        bank = torch.tensor([[[1., 0.], [0., 0.], [1., 0.]],
+                             [[0., 1.], [1., 0.], [0., 0.]],
+                             [[0., 0.], [0., 0.], [1., 0.]]])
+        result = spatial_cosines(probe, bank, torch.tensor([[.1, .2, .3]]))
+        torch.testing.assert_close(result, torch.tensor([[1., 0., .3]]))
+
     def test_key_means_the_last_layer_without_padding(self):
         raw = torch.tensor([[[99., 99.], [99., 99.], [99., 99.]],
                             [[3., 0.], [0., 4.], [100., 100.]]])
@@ -57,3 +83,30 @@ class ViewRoutingTests(unittest.TestCase):
             self.assertEqual(row["routing"][f"drop_{selected:02}"]["weights"][f"{selected:02}"], 0)
             self.assertEqual(row["oracle"], row["conditions"][f"single_{p['write_camera']:02}"])
         self.assertIn("drop_12 soft", report({route["id"]: counts}, .05))
+
+    def test_pooling_comparison_changes_selection_and_preserves_single_view_scores(self):
+        from dinoexp.evidence_memory import EvidenceMatcher
+        from dinoexp.gallery_reader import cache_route
+        from test_gallery_reader import fixture
+
+        torch.manual_seed(7)
+        torch.set_num_threads(1)
+        model = EvidenceMatcher(dim=12, heads=3, slots=8).eval()
+        route, pairs, obs, probes = fixture("val")
+        cache = cache_route(model, route, pairs, obs, probes)
+        axes = torch.eye(len(CAMERAS))
+
+        def keys(index, foreground_index):
+            foreground = axes[foreground_index]
+            return dict(global_mean=axes[index], foreground_mean=foreground, foreground_grid=foreground.repeat(16, 1))
+
+        writes = {p["write"]: keys(p["position"] - 1, p["position"] - 1) for p in pairs}
+        queries = {p["query"]: keys(p["position"] % len(CAMERAS), p["position"] - 1) for p in pairs}
+        results = evaluate_routes(model, {route["id"]: (cache, writes, queries)}, compare_pooling=True)
+        summaries = {method: summarize(rows) for method, rows in results.items()}
+        self.assertEqual(tuple(results), POOLING)
+        self.assertEqual([sum(s[route["id"]]["view_hits"].values()) for s in summaries.values()], [0, 8, 8])
+        first = results["global_mean"]
+        for method in POOLING[1:]:
+            self.assertEqual([r["conditions"] for r in first], [r["conditions"] for r in results[method]])
+        self.assertIn("foreground_grid/report.md", pooling_report(summaries, results))
